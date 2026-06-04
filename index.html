@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>FMW Monitoring Dashboard</title>
+    <link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+    <div class="page-shell">
+        <header class="hero">
+            <div>
+                <p class="eyebrow">Identity Operations</p>
+                <h1 id="dashboard-title">FMW Monitoring Dashboard</h1>
+                <p class="hero-copy">
+                    Live snapshot for OIG, OAM, and OUD infrastructure health, application reachability,
+                    and quick operational context.
+                </p>
+            </div>
+            <div class="hero-panel">
+                <p class="panel-label">Last refresh</p>
+                <p class="panel-value" id="generated-at">Waiting for data</p>
+                <p class="panel-hint">
+                    Run <code>scripts\Refresh-IamDashboard.ps1</code> to update the snapshot.
+                </p>
+            </div>
+        </header>
+
+        <main class="dashboard-layout">
+            <section class="summary-grid" id="summary-grid"></section>
+
+            <section class="notes-card">
+                <div class="section-heading">
+                    <h2>Environment Notes</h2>
+                    <p>Operational assumptions and live-discovery notes captured by the collector.</p>
+                </div>
+                <ul id="notes-list" class="notes-list"></ul>
+            </section>
+
+            <section id="targets" class="targets-grid"></section>
+
+            <section class="runbook-card">
+                <div class="section-heading">
+                    <h2>Refresh Workflow</h2>
+                    <p>This starter stays simple on purpose: PowerShell collects, the browser renders.</p>
+                </div>
+                <div class="runbook-steps">
+                    <div class="runbook-step">
+                        <span>1</span>
+                        <p>Update local connection details in <code>config\targets.local.json</code>.</p>
+                    </div>
+                    <div class="runbook-step">
+                        <span>2</span>
+                        <p>Run <code>powershell -ExecutionPolicy Bypass -File .\scripts\Refresh-IamDashboard.ps1</code>.</p>
+                    </div>
+                    <div class="runbook-step">
+                        <span>3</span>
+                        <p>Open <code>index.html</code> to review the latest server and application state.</p>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script src="data/dashboard-data.js"></script>
+    <script src="assets/app.js"></script>
+</body>
+</html>

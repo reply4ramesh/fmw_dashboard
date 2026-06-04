@@ -1,0 +1,17 @@
+[Unit]
+Description=__PRODUCT_NAME__ GitHub upgrade helper
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=__INSTALL_DIR__
+EnvironmentFile=-__CONFIG_FILE__
+ExecStart=/bin/bash -lc 'while true; do __INSTALL_DIR__/venv/bin/python __INSTALL_DIR__/upgrade_watcher.py || true; sleep 2; done'
+Restart=always
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

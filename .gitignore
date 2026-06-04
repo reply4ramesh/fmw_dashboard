@@ -1,0 +1,14 @@
+config/*.local.json
+server-app/config.json
+dist/
+scratch/
+server-app/__pycache__/
+server-app/state/
+server-app/*.log
+state/
+runtime_env/
+snapshots/
+*.log
+*.db
+*.sqlite
+*.sqlite-*

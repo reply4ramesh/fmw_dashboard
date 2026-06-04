@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>FMW Monitoring Dashboard</title>
+    <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg?v=4u">
+    <link rel="shortcut icon" href="/assets/favicon.svg?v=4u">
+    <link rel="stylesheet" href="/assets/styles.css?v=99">
+</head>
+<body>
+    <div class="app-shell">
+        <header class="topbar">
+            <div class="topbar-brand" aria-label="Oracle FMW Monitoring Dashboard">
+                <span class="oracle-wordmark">ORACLE</span>
+                <span class="topbar-brand-divider" aria-hidden="true"></span>
+                <h1 class="topbar-title">FMW Monitoring Dashboard</h1>
+            </div>
+
+            <div class="topbar-context">
+                <div class="topbar-update">
+                    <button id="refresh-dashboard-button" class="topbar-update-button" type="button" data-refresh-dashboard>Refresh</button>
+                    <button id="check-updates-button" class="topbar-update-button" type="button" data-check-updates>Check For Updates</button>
+                    <span id="update-check-status" class="topbar-update-status">Version loading</span>
+                </div>
+                <label for="context-switcher">Context</label>
+                <select id="context-switcher"></select>
+                <div class="topbar-user">
+                    <button class="topbar-avatar-button" type="button" data-user-menu-toggle aria-label="Open user guide and feedback menu" aria-expanded="false">
+                        <img class="topbar-avatar" src="/assets/oci/user-icon.png" alt="">
+                    </button>
+                    <div id="topbar-user-menu" class="topbar-user-menu hidden" role="menu" aria-label="User guide and feedback">
+                        <a role="menuitem" href="/manual.html" target="_blank" rel="noopener">User Guide</a>
+                        <a role="menuitem" href="/help-feedback.html" target="_blank" rel="noopener">Help / Feedback</a>
+                        <button type="button" role="menuitem" data-open-support-center>Support Center</button>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <div class="workspace-shell">
+            <aside class="workspace-sidebar">
+                <nav id="sidebar-nav" class="sidebar-nav" aria-label="Primary"></nav>
+            </aside>
+
+            <main class="workspace-main">
+                <section class="page-hero">
+                    <div class="page-hero-strip" aria-hidden="true"></div>
+                    <div class="page-hero-body">
+                        <div class="page-hero-copy">
+                            <p id="page-breadcrumb" class="page-breadcrumb">Loading</p>
+                            <h2 id="page-title" class="page-title">Loading Console</h2>
+                            <p id="page-copy" class="page-copy">Preparing the dashboard.</p>
+                        </div>
+
+                        <div class="page-hero-meta">
+                            <div id="page-status"></div>
+                            <p id="page-generated-at" class="page-generated-at">Loading</p>
+                        </div>
+                    </div>
+
+                    <div id="page-badges" class="page-badges"></div>
+                </section>
+
+                <section id="message-banner" class="message-banner hidden"></section>
+                <section id="page-content" class="page-content"></section>
+            </main>
+        </div>
+    </div>
+
+    <div id="environment-modal-backdrop" class="modal-backdrop hidden">
+        <section class="modal-shell" role="dialog" aria-modal="true" aria-labelledby="environment-modal-title">
+            <header class="modal-header">
+                <div>
+                    <p id="environment-modal-crumb" class="modal-breadcrumb">Administration / Environments</p>
+                    <h3 id="environment-modal-title" class="modal-title">Create Environment</h3>
+                    <p class="modal-copy">Save connection details for this environment.</p>
+                </div>
+
+                <button id="environment-modal-close" class="button is-quiet" type="button" aria-label="Close">Close</button>
+            </header>
+
+            <div id="environment-modal-body" class="modal-body"></div>
+        </section>
+    </div>
+
+    <script src="/assets/app.js?v=107"></script>
+</body>
+</html>

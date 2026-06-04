@@ -1,6 +1,6 @@
-# FMW Monitoring Dashboard
+# FMW Monitoring Dashboard Server
 
-`iam-monitoring` is a Linux-hosted dashboard for Oracle IAM environments, including OUD and WebLogic monitoring, environment bootstrap, scheduled collection, and GitHub-based upgrades.
+This directory contains the IAM monitoring dashboard server, administration API, Linux installer, scheduler, and upgrade utilities.
 
 ## Quick Install
 
@@ -60,12 +60,6 @@ sudo bash -lc 'export http_proxy=http://www-proxy-phx.oraclecorp.com:80; export 
 
 The upgrade keeps `/etc/iam-monitoring.env`, saved environments, runtime state, snapshots, and logs in place.
 
-## Fresh Install State
-
-The GitHub package does not include customer connection profiles, saved passwords, runtime SSH keys, snapshots, logs, or the SQLite registry. Those files are created locally on each installed dashboard server under `/var/lib/iam-monitoring/state` and `/var/log/iam-monitoring`.
-
-When a customer installs from GitHub on a new machine, the dashboard starts with an empty environment registry. They add their own OAM, OAA, OID, OUD, OIG, or WebLogic profiles from `Administration -> Environments`.
-
 ## After Install
 
 The installer prints the dashboard URL at the end:
@@ -123,9 +117,15 @@ sudo systemctl restart iam-monitoring
 - Use `Run Jobs Now` inside an environment to collect immediately.
 - Scheduled collection runs through `/etc/cron.d/iam-monitoring`.
 
-## Source Layout
+## Files
 
-- `server-app/`: active hosted dashboard server and Linux deployment utilities
-- `server-app/static/`: dashboard UI
-- `server-app/README.md`: server-app specific notes
-- root prototype files: earlier local prototype files kept for reference
+- `app.py`: HTTP server and administration API
+- `collect_environment.py`: collector entry point used by manual jobs and scheduler runs
+- `collector.py`: SSH, Linux, OUD, and WebLogic collection
+- `config_store.py`: configuration normalization
+- `environment_registry.py`: SQLite-backed environment registry
+- `job_runner.py`: bootstrap, runtime env files, snapshots, and collector job state
+- `scheduler_jobs.sh`: scheduler entry point
+- `install.sh`: installer wrapper
+- `install_oracledash.sh`: bundle-aware installer
+- `upgrade.sh`: bundle-aware upgrade utility

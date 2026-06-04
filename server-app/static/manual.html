@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>User Guide - FMW Monitoring Dashboard</title>
+    <style>
+        :root {
+            --ink: #161412;
+            --muted: #6f6861;
+            --border: #ded6cf;
+            --oracle: #c74634;
+            --green: #2f6f5f;
+            --amber: #9a6418;
+            --surface: #fffdf9;
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            color: var(--ink);
+            background: radial-gradient(circle at 100% 0%, rgba(199, 70, 52, 0.08), transparent 30%), #f7f4ef;
+            font-family: Arial, Helvetica, sans-serif;
+            line-height: 1.5;
+        }
+        .page {
+            width: min(1120px, calc(100vw - 32px));
+            margin: 34px auto 48px;
+        }
+        .hero, .panel {
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            background: rgba(255, 255, 255, 0.94);
+            box-shadow: 0 18px 38px rgba(35, 31, 28, 0.08);
+        }
+        .hero {
+            padding: 28px;
+        }
+        .brand {
+            display: inline-flex;
+            align-items: center;
+            gap: 14px;
+            margin-bottom: 18px;
+            padding: 12px 16px;
+            border-radius: 10px;
+            background: linear-gradient(135deg, #fff, #f8f6f2);
+            box-shadow: 0 12px 26px rgba(35, 31, 28, 0.1);
+        }
+        .oracle {
+            color: var(--oracle);
+            font-weight: 900;
+            letter-spacing: 0.1em;
+        }
+        .divider {
+            width: 1px;
+            height: 30px;
+            background: var(--border);
+        }
+        h1 {
+            margin: 0 0 10px;
+            font-size: clamp(2rem, 5vw, 3rem);
+        }
+        h2 {
+            margin: 0 0 12px;
+            font-size: 1.22rem;
+        }
+        p { color: var(--muted); }
+        .quick-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+            gap: 12px;
+            margin-top: 18px;
+        }
+        .quick-card {
+            padding: 14px;
+            border: 1px solid rgba(47, 111, 95, 0.22);
+            border-radius: 12px;
+            background: linear-gradient(135deg, rgba(238, 249, 245, 0.94), #fff);
+        }
+        .quick-card span {
+            color: var(--muted);
+            font-size: 0.72rem;
+            font-weight: 900;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+        }
+        .quick-card strong {
+            display: block;
+            margin-top: 6px;
+            font-size: 1rem;
+        }
+        .panel {
+            margin-top: 18px;
+            padding: 22px;
+        }
+        .step-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 16px;
+        }
+        .step {
+            padding: 18px;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            background: var(--surface);
+        }
+        .step-number {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 30px;
+            height: 30px;
+            margin-bottom: 10px;
+            border-radius: 999px;
+            background: #111;
+            color: #fff;
+            font-weight: 900;
+        }
+        ul {
+            margin: 10px 0 0;
+            padding-left: 20px;
+            color: var(--muted);
+        }
+        li + li { margin-top: 7px; }
+        code {
+            padding: 2px 5px;
+            border-radius: 5px;
+            background: #f0ebe5;
+            color: var(--ink);
+        }
+        .callout {
+            margin-top: 14px;
+            padding: 14px;
+            border: 1px solid rgba(154, 100, 24, 0.28);
+            border-radius: 12px;
+            background: linear-gradient(135deg, #fff6df, #fff);
+            color: #704b14;
+            font-weight: 800;
+        }
+        .button {
+            display: inline-flex;
+            align-items: center;
+            min-height: 40px;
+            margin-top: 14px;
+            padding: 0 16px;
+            border-radius: 9px;
+            background: #111;
+            color: #fff;
+            font-weight: 900;
+            text-decoration: none;
+        }
+    </style>
+</head>
+<body>
+    <main class="page">
+        <section class="hero">
+            <div class="brand">
+                <span class="oracle">ORACLE</span>
+                <span class="divider" aria-hidden="true"></span>
+                <strong>FMW Monitoring Dashboard</strong>
+            </div>
+            <h1>User Guide</h1>
+            <p>Use this guide to create connection profiles, run collectors, review infrastructure and application metrics, analyze logs, and upgrade the dashboard.</p>
+            <div class="quick-grid">
+                <div class="quick-card"><span>First Step</span><strong>Create an environment profile</strong></div>
+                <div class="quick-card"><span>Collector</span><strong>Run Jobs Now for fresh data</strong></div>
+                <div class="quick-card"><span>Best Signal</span><strong>OPatch analysis and WebLogic runtime</strong></div>
+                <div class="quick-card"><span>Logs</span><strong>Use Log Analyzer for complete log review</strong></div>
+            </div>
+        </section>
+
+        <section class="panel">
+            <h2>Daily Workflow</h2>
+            <div class="step-grid">
+                <article class="step">
+                    <span class="step-number">1</span>
+                    <h2>Create A Connection Profile</h2>
+                    <p>Open <strong>Administration</strong>, create an environment, and add the products that exist in that connection.</p>
+                    <ul>
+                        <li>For WebLogic, provide Admin URL, WebLogic credentials, ORACLE_HOME, DOMAIN_HOME, and SSH details.</li>
+                        <li>For OIG/OIM, WebLogic is selected automatically. Provide OIG/OIM ORACLE_HOME, DOMAIN_HOME, WebLogic credentials, and xelsysadm credentials.</li>
+                        <li>For OUD, provide OUD ORACLE_HOME, OUD instances, and Directory Manager credentials. WebLogic details are optional.</li>
+                        <li>For OID, provide OID ORACLE_HOME, cn=orcladmin credentials, and optional WebLogic details.</li>
+                        <li>For OAA, provide Kubernetes host SSH, namespace, release name, ingress namespace, runtime URL, and runtime API credentials.</li>
+                    </ul>
+                </article>
+                <article class="step">
+                    <span class="step-number">2</span>
+                    <h2>Bootstrap And Collect</h2>
+                    <p>Use <strong>Create And Bootstrap</strong> for new profiles. After bootstrap, the dashboard uses the installed runtime SSH key for scheduled collection.</p>
+                    <ul>
+                        <li>Use <strong>Test SSH</strong> before saving when credentials are new.</li>
+                        <li>Use <strong>Run Jobs Now</strong> from Environment Details when you need an immediate refresh.</li>
+                        <li>Scheduled collection runs based on the per-environment interval.</li>
+                    </ul>
+                </article>
+                <article class="step">
+                    <span class="step-number">3</span>
+                    <h2>Review Server Metrics</h2>
+                    <p>Server Metrics shows host reachability, CPU, memory, disk, uptime, WebLogic JVM processes, and cluster node views.</p>
+                    <ul>
+                        <li>For clusters, node tabs show per-host infrastructure details.</li>
+                        <li>Health Map gives a quick visual summary before reviewing tables.</li>
+                        <li>Hover over warning or down status pills to see the reason.</li>
+                    </ul>
+                </article>
+                <article class="step">
+                    <span class="step-number">4</span>
+                    <h2>Review Application Metrics</h2>
+                    <p>Application Metrics changes based on the products in the profile.</p>
+                    <ul>
+                        <li>ORACLE_HOME tabs show OPatch inventory, patch recommendations, certificates, and product homes.</li>
+                        <li>WebLogic Server tabs show domain servers, runtime status, JTA, JVM, sockets, and selected runtime groups.</li>
+                        <li>OUD and OID tabs show directory instance data, monitoring, schema, policies, plugin details, and certificates.</li>
+                        <li>OAA tabs show pods, Kubernetes resources, Helm version/history, deployment details, certificates, and runtime properties.</li>
+                    </ul>
+                </article>
+                <article class="step">
+                    <span class="step-number">5</span>
+                    <h2>Use OPatch Recommendations</h2>
+                    <p>The dashboard compares installed patches against the bundled KA754 patch catalog for 12.2.1.4 and 14c.</p>
+                    <ul>
+                        <li>Current Stack Bundle shows the installed IDM Stack Patch Bundle when present.</li>
+                        <li>Recommended Level shows the latest available SPB currently known to the dashboard.</li>
+                        <li>Rows marked Update or Install identify patches that should be reviewed.</li>
+                    </ul>
+                    <div class="callout">Patch data is updated in dashboard releases. Use Check For Updates before a customer demo or quarterly patch review.</div>
+                </article>
+                <article class="step">
+                    <span class="step-number">6</span>
+                    <h2>Analyze Logs</h2>
+                    <p>Open <strong>Log Analyzer</strong>, choose a server or product log source, then select a log file.</p>
+                    <ul>
+                        <li>Double-click a file or click <strong>Open</strong> to load the complete log.</li>
+                        <li>Use <strong>Tail</strong> for a faster latest-lines view.</li>
+                        <li>Use filters for text, severity, wrapping, newest first, and Java exception / stack analysis.</li>
+                        <li>Use <strong>Detailed Log Analysis</strong> for loggers, levels, problem indicators, and searchable parsed entries.</li>
+                    </ul>
+                </article>
+                <article class="step">
+                    <span class="step-number">7</span>
+                    <h2>Upgrade The Dashboard</h2>
+                    <p>Open <strong>Support Center</strong> from Administration to check version, service paths, health endpoint, GitHub proxy, and upgrade controls.</p>
+                    <ul>
+                        <li>Use <strong>Check For Updates</strong> from the top bar.</li>
+                        <li>Configure proxy settings in Support Center if GitHub access requires a proxy.</li>
+                        <li>After upgrade, refresh the browser and confirm the version badge.</li>
+                    </ul>
+                </article>
+                <article class="step">
+                    <span class="step-number">8</span>
+                    <h2>Get Help</h2>
+                    <p>Use the Help / Feedback page when you need assistance with access, collection, metrics, logs, or upgrade issues.</p>
+                    <ul>
+                        <li>Include environment name, product, host, log path, dashboard version, screenshot, and exact error text.</li>
+                        <li>Include whether the issue happened during Bootstrap, Run Jobs Now, Test SSH, Tail, Load Complete, or Detailed Log Analysis.</li>
+                    </ul>
+                    <a class="button" href="/help-feedback.html" target="_blank" rel="noopener">Open Help / Feedback</a>
+                </article>
+            </div>
+        </section>
+    </main>
+</body>
+</html>
