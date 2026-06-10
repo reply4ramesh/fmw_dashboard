@@ -8790,6 +8790,8 @@ def collect_product_host_snapshots(environment, primary_target, primary_server, 
             source_servers.append("OID")
         if products.get("oud"):
             source_servers.append("OUD")
+        if products.get("oaa"):
+            source_servers.append("OAA")
         primary_name = "Primary Server Host"
         if products.get("oam") or products.get("weblogic") or products.get("oig"):
             primary_name = "OAM / WebLogic Host" if products.get("oam") else "WebLogic Admin Host"
@@ -8807,7 +8809,23 @@ def collect_product_host_snapshots(environment, primary_target, primary_server, 
 
     def add_target_snapshot(node_id, node_name, role, source_servers, product_target):
         host_key = weblogic_host_key((product_target or {}).get("host"))
-        if not host_key or host_key in seen_keys:
+        if not host_key:
+            return False
+        if host_key in seen_keys:
+            for snapshot in snapshots:
+                if host_key in (
+                    weblogic_host_key(snapshot.get("configuredHost")),
+                    weblogic_host_key(snapshot.get("actualHostname")),
+                ):
+                    merged = list(snapshot.get("sourceServers") or [])
+                    for source in source_servers or []:
+                        if source and source not in merged:
+                            merged.append(source)
+                    snapshot["sourceServers"] = merged
+                    snapshot["productHost"] = True
+                    if node_name and node_name not in (snapshot.get("nodeName") or ""):
+                        snapshot["nodeName"] = "{0} / {1}".format(snapshot.get("nodeName") or "Host", node_name)
+                    break
             return False
         snapshot = get_server_snapshot(
             product_target,

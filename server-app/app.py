@@ -877,22 +877,37 @@ def build_environment_logscope_profiles(environment, dashboard=None):
         kube_host = oaa.get("kubeHost") or {}
         target = logscope_clone_target(kube_host or primary_target, kube_host.get("host") or primary_target.get("host"))
         profile = ensure(target, "OAA")
-        logs_path = logscope_install_config_value(product_metrics.get("oaa") or {}, ["install.mount.logs.path", "logs mount path", "logs.mount"])
-        if not logs_path:
+        oaa_metrics = product_metrics.get("oaa") or {}
+        logs_path = logscope_install_config_value(oaa_metrics, ["install.mount.logs.path", "logs mount path", "logs.mount"])
+        log_paths = []
+        if logs_path:
+            log_paths.append(("OAA Mounted Logs", logs_path))
+        else:
             settings_path = (
-                (product_metrics.get("oaa") or {}).get("settingsPath")
-                or logscope_install_config_value(product_metrics.get("oaa") or {}, ["install.mount.config.path", "config mount path", "settings path"])
+                oaa_metrics.get("installConfigSourcePath")
+                or oaa_metrics.get("settingsPath")
+                or oaa.get("installSettingsPath")
+                or logscope_install_config_value(oaa_metrics, ["install.mount.config.path", "config mount path", "settings path"])
             )
             settings_path = str(settings_path or "").strip().rstrip("/")
             if settings_path:
+                if settings_path.endswith(".properties"):
+                    settings_path = settings_path.rsplit("/", 1)[0] if "/" in settings_path else ""
                 parent_path = settings_path.rsplit("/", 1)[0] if "/" in settings_path else ""
-                if parent_path:
-                    logs_path = logscope_unix_join(parent_path, "logs")
-        if logs_path:
+                for candidate in (
+                    logscope_unix_join(settings_path, "logs"),
+                    logscope_unix_join(parent_path, "logs") if parent_path else "",
+                ):
+                    if candidate and candidate not in [item[1] for item in log_paths]:
+                        log_paths.append(("OAA Logs Near Install Config", candidate))
+        for candidate in ("/u01/oracle/logs", "/u01/oracle/oaa/logs", "/scratch/oaa/logs"):
+            if candidate not in [item[1] for item in log_paths]:
+                log_paths.append(("OAA Common Logs", candidate))
+        for name, directory in log_paths:
             logscope_add_group(profile, {
-                "name": "OAA Mounted Logs",
+                "name": name,
                 "productCode": "OAA",
-                "directory": logs_path,
+                "directory": directory,
                 "important": logscope_important_files("OAA", "OAA"),
             })
 
