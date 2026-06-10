@@ -8868,7 +8868,11 @@ def collect_product_host_snapshots(environment, primary_target, primary_server, 
             oaa_target,
         )
 
-    if len(snapshots) <= 1:
+    has_product_host_context = any(
+        item.get("productHost") and item.get("sourceServers")
+        for item in snapshots
+    )
+    if len(snapshots) <= 1 and not has_product_host_context:
         return [], {}
 
     discovery_mode = "mixed-product-hosts" if base_snapshots else "product-hosts"
