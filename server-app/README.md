@@ -60,6 +60,28 @@ sudo bash -lc 'export http_proxy=http://www-proxy-phx.oraclecorp.com:80; export 
 
 The upgrade keeps `/etc/iam-monitoring.env`, saved environments, runtime state, snapshots, and logs in place.
 
+## Uninstall
+
+Use these steps when you want to remove the dashboard from a Linux host.
+
+```bash
+sudo systemctl stop iam-monitoring iam-monitoring-upgrader 2>/dev/null || true
+sudo systemctl disable iam-monitoring iam-monitoring-upgrader 2>/dev/null || true
+sudo rm -f /etc/systemd/system/iam-monitoring.service /etc/systemd/system/iam-monitoring-upgrader.service /etc/cron.d/iam-monitoring
+sudo systemctl daemon-reload
+sudo rm -rf /opt/iam-monitoring
+```
+
+Optional cleanup removes local runtime configuration, saved connection profiles, encrypted passwords, runtime SSH keys, snapshots, and logs:
+
+```bash
+sudo rm -f /etc/iam-monitoring.env
+sudo rm -rf /var/lib/iam-monitoring/state /var/log/iam-monitoring
+sudo userdel iam-monitoring 2>/dev/null || true
+```
+
+Skip the optional cleanup if you want to preserve customer connection profiles for a later reinstall.
+
 ## After Install
 
 The installer prints the dashboard URL at the end:

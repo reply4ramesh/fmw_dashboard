@@ -66,6 +66,29 @@ def as_int_safe(value):
         return None
 
 
+def run_parallel_tasks(tasks, max_workers=6):
+    tasks = [(name, func) for name, func in (tasks or []) if name and callable(func)]
+    if not tasks:
+        return {}
+    workers = max(1, min(int(max_workers or 1), len(tasks)))
+    results = {}
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = {executor.submit(func): name for name, func in tasks}
+        for future, name in futures.items():
+            try:
+                results[name] = future.result()
+            except Exception as exc:
+                results[name] = exc
+    return results
+
+
+def task_result(results, name, default=None):
+    value = (results or {}).get(name, default)
+    if isinstance(value, Exception):
+        return default
+    return value
+
+
 def threshold_value(value):
     if value in (None, "", "-"):
         return None
@@ -2014,6 +2037,18 @@ def parse_opatch_lspatches(text):
     }
 
 
+def merge_opatch_patch_rows(primary_rows, fallback_rows):
+    rows = []
+    seen = set()
+    for row in list(primary_rows or []) + list(fallback_rows or []):
+        patch_id = str((row or {}).get("patchId") or "").strip()
+        if not patch_id or patch_id in seen:
+            continue
+        seen.add(patch_id)
+        rows.append(row)
+    return rows
+
+
 def _patch_row(description, patch_id, applicability):
     return {
         "description": description,
@@ -2421,10 +2456,14 @@ def collect_opatch_inventory(target, oracle_home, progress=None, label="OIG/OIM"
         "if [ -x \"$inv\" ]; then printf 'VIEW_INVENTORY_PATH=%s\\n' \"$inv\"; \"$inv\" 2>/dev/null | grep 'Distribution' | sed 's/^/OUI_/'; return 0; fi; "
         "done; return 1; "
         "}}; "
+        "run_lspatches() {{ "
+        "printf 'OPATCH_LSPATCHES_BEGIN\\n'; \"$1\" lspatches 2>&1; lsp_rc=$?; printf 'OPATCH_LSPATCHES_END=%s\\n' \"$lsp_rc\"; return 0; "
+        "}}; "
         "for opatch in \"$(dirname \"$ORACLE_HOME\")/OPatch/opatch\" \"$ORACLE_HOME/OPatch/opatch\"; do "
         "if [ -x \"$opatch\" ]; then printf 'OPATCH_PATH=%s\\n' \"$opatch\"; "
         "start=$(date +%s); \"$opatch\" lsinventory; rc=$?; end=$(date +%s); "
         "printf 'OPATCH_DURATION_SECONDS=%s\\n' \"$((end - start))\"; "
+        "run_lspatches \"$opatch\"; "
         "view_inventory || true; "
         "exit \"$rc\"; fi; "
         "done; "
@@ -2439,6 +2478,12 @@ def collect_opatch_inventory(target, oracle_home, progress=None, label="OIG/OIM"
     result = run_target(opatch_target, command, timeout=None)
     output = str(result.get("output") or "")
     parsed = parse_opatch_lsinventory(output)
+    lspatches_match = re.search(r"OPATCH_LSPATCHES_BEGIN\n([\s\S]*?)\nOPATCH_LSPATCHES_END=([0-9]+)", output)
+    lspatches_output = lspatches_match.group(1) if lspatches_match else ""
+    lspatches_exit_code = int(lspatches_match.group(2)) if lspatches_match else None
+    lspatches_parsed = parse_opatch_lspatches(lspatches_output)
+    lsinventory_patch_count = len(parsed.get("patches") or [])
+    parsed["patches"] = merge_opatch_patch_rows(parsed.get("patches"), lspatches_parsed.get("patches"))
     duration_match = re.search(r"^OPATCH_DURATION_SECONDS=([0-9]+)$", output, re.M)
     duration_seconds = int(duration_match.group(1)) if duration_match else None
     path_match = re.search(r"^OPATCH_PATH=(.+)$", output, re.M)
@@ -2448,9 +2493,13 @@ def collect_opatch_inventory(target, oracle_home, progress=None, label="OIG/OIM"
         "opatchPath": opatch_path,
         "durationSeconds": duration_seconds,
         "command": "{0} lsinventory".format(opatch_path or "$(dirname ORACLE_HOME)/OPatch/opatch"),
+        "lspatchesCommand": "{0} lspatches".format(opatch_path or "$(dirname ORACLE_HOME)/OPatch/opatch"),
+        "lspatchesExitCode": lspatches_exit_code,
         "distributionCommand": "{0}/oui/bin/viewInventory.sh | grep Distribution".format(home),
         "error": "",
     })
+    if not lsinventory_patch_count and parsed.get("patches"):
+        parsed["parserNote"] = "OPatch lsinventory did not expose detailed patch rows, so installed patch IDs were loaded from OPatch lspatches."
     if duration_seconds is not None and duration_seconds > 60:
         parsed["warning"] = "OPatch lsinventory took {0} seconds on this machine. This can happen when OPatch scans inactive patches.".format(duration_seconds)
         if callable(progress):
@@ -2885,16 +2934,19 @@ def enrich_oud_shared_metrics(target, environment, metrics, progress=None):
     result = metrics or {}
     settings = environment.get("oud") or {}
     oracle_home = str(settings.get("oracleHome") or "").strip()
+    tasks = [
+        ("certificates", lambda: collect_oud_ssl_certificates(target, result, progress=progress)),
+    ]
     if oracle_home:
-        result["opatch"] = collect_opatch_inventory(target, oracle_home, progress=progress, label="OUD")
-    else:
-        result["opatch"] = {
-            "error": "OUD ORACLE_HOME Path is not configured.",
-            "versions": [],
-            "products": [],
-            "patches": [],
-        }
-    certificates, certificate_error = collect_oud_ssl_certificates(target, result, progress=progress)
+        tasks.append(("opatch", lambda: collect_opatch_inventory(target, oracle_home, progress=progress, label="OUD")))
+    task_results = run_parallel_tasks(tasks, max_workers=2)
+    result["opatch"] = task_result(task_results, "opatch") or {
+        "error": "OUD ORACLE_HOME Path is not configured.",
+        "versions": [],
+        "products": [],
+        "patches": [],
+    }
+    certificates, certificate_error = task_result(task_results, "certificates", ([], "OUD certificate collection failed."))
     result["certificates"] = certificates
     result["certificateError"] = certificate_error
     return result
@@ -3340,6 +3392,12 @@ def get_oid_metrics(target, environment, progress=None):
     if callable(progress):
         progress("Starting OID process, LDAP monitoring, OPatch, and certificate collection.")
 
+    opatch_executor = None
+    opatch_future = None
+    if oracle_home:
+        opatch_executor = ThreadPoolExecutor(max_workers=1)
+        opatch_future = opatch_executor.submit(collect_opatch_inventory, oid_target, oracle_home, progress, "OID")
+
     process_command = "ps -ef | grep '[o]idldapd' || true"
     process_result = run_target(oid_target, process_command, timeout=30)
     processes, discovered_ldap_port, discovered_ldaps_port = parse_oid_processes(process_result.get("output"))
@@ -3399,8 +3457,11 @@ def get_oid_metrics(target, environment, progress=None):
     ldap_ports = compact_unique_values([settings.get("ldapPort"), discovered_ldap_port, config_ldap_port] + [item.get("ldapPort") for item in oid_instances] + [row.get("ldapPort") for row in processes])
     ldaps_ports = compact_unique_values([settings.get("ldapsPort"), discovered_ldaps_port, config_ldaps_port] + [item.get("ldapsPort") for item in oid_instances] + [row.get("ldapsPort") for row in processes])
 
-    if oracle_home:
-        opatch = collect_opatch_inventory(oid_target, oracle_home, progress=progress, label="OID")
+    if opatch_future is not None:
+        try:
+            opatch = opatch_future.result()
+        except Exception as exc:
+            opatch = {"error": str(exc), "versions": [], "products": [], "patches": []}
         opatch["recommendation"] = build_fmw_patch_recommendation(opatch, environment, oracle_home)
         opatch["patchComparisonRows"] = opatch["recommendation"].get("comparisonRows", [])
     else:
@@ -3410,6 +3471,8 @@ def get_oid_metrics(target, environment, progress=None):
             "products": [],
             "patches": [],
         }
+    if opatch_executor is not None:
+        opatch_executor.shutdown(wait=False)
     server_status, server_status_severity, server_status_reason = oid_server_status(processes, ldap_groups)
     certificate_endpoints = oid_certificate_endpoints(oid_instances, processes, ldap_host)
     certificates, certificate_error = collect_oid_certificates(oid_target, certificate_endpoints, progress=progress)
@@ -6084,63 +6147,20 @@ def get_oaa_metrics(target, environment, progress=None):
 
     pods_json_command = "{0} get pods -n {1} -o json".format(shlex.quote(kubectl), shlex.quote(namespace))
     pods_command = "{0} get pods -n {1} -o wide".format(kubectl, namespace)
-    pods_result = run_target(target, pods_json_command, timeout=60)
-    pods_payload = parse_json_payload(pods_result.get("output"))
-    pods = parse_kubernetes_pods(pods_payload) if pods_payload else []
-    pods_error = None
-    if pods_result.get("exit_code") != 0:
-        pods_error = pods_result.get("output") or "kubectl get pods failed."
-        errors.append(pods_error)
-    elif pods_payload is None:
-        pods_error = "kubectl get pods did not return JSON."
-        errors.append(pods_error)
-
     ingress_command = "{0} get all,ing -n {1} -o json".format(shlex.quote(kubectl), shlex.quote(ingress_namespace))
-    ingress_result = run_target(target, ingress_command, timeout=60)
-    ingress_payload = parse_json_payload(ingress_result.get("output"))
-    ingress_resources = parse_kubernetes_resources(ingress_payload) if ingress_payload else []
-    ingress_error = None
-    if ingress_result.get("exit_code") != 0:
-        ingress_error = ingress_result.get("output") or "kubectl get all,ing failed."
-        errors.append(ingress_error)
-    elif ingress_payload is None:
-        ingress_error = "kubectl get all,ing did not return JSON."
-        errors.append(ingress_error)
-
     namespace_resources_command = "{0} get svc,deploy,rs,ing,pvc -n {1} -o json".format(
         shlex.quote(kubectl),
         shlex.quote(namespace),
     )
-    namespace_resources_result = run_target(target, namespace_resources_command, timeout=60)
-    namespace_resources_payload = parse_json_payload(namespace_resources_result.get("output"))
-    namespace_resources = parse_kubernetes_resources(namespace_resources_payload) if namespace_resources_payload else []
-    namespace_resources_error = None
-    if namespace_resources_result.get("exit_code") != 0:
-        namespace_resources_error = namespace_resources_result.get("output") or "kubectl get svc,deploy,rs,ing,pvc failed."
-    elif namespace_resources_payload is None:
-        namespace_resources_error = "kubectl get svc,deploy,rs,ing,pvc did not return JSON."
-
-    if callable(progress):
-        progress("Collecting OAA Kubernetes node, pod usage, and warning event metrics.")
     nodes_json_command = "{0} get nodes -o json".format(shlex.quote(kubectl))
     nodes_command = "{0} get nodes -o wide".format(kubectl)
-    nodes_result = run_target(target, nodes_json_command, timeout=60)
-    nodes_payload = parse_json_payload(nodes_result.get("output"))
-    node_inventory = parse_kubernetes_nodes(nodes_payload) if nodes_payload else []
-    nodes_error = None
-    if nodes_result.get("exit_code") != 0:
-        nodes_error = nodes_result.get("output") or "kubectl get nodes failed."
-    elif nodes_payload is None:
-        nodes_error = "kubectl get nodes did not return JSON."
-
     helm_version_command = "helm version"
-    helm_version_result = run_target(target, helm_version_command, timeout=45)
-    helm_version = parse_oaa_helm_version(helm_version_result.get("output")) if helm_version_result.get("exit_code") == 0 else {}
-    helm_version_error = None
-    if helm_version_result.get("exit_code") != 0:
-        helm_version_error = helm_version_result.get("output") or "helm version failed."
-    elif not (helm_version.get("version") or helm_version.get("raw")):
-        helm_version_error = "helm version returned no parseable version details."
+    pod_usage_command = "{0} top pods -n {1} --no-headers".format(shlex.quote(kubectl), shlex.quote(namespace))
+    node_usage_command = "{0} top nodes --no-headers".format(shlex.quote(kubectl))
+    events_command = "{0} get events -n {1} --sort-by=.lastTimestamp -o json".format(
+        shlex.quote(kubectl),
+        shlex.quote(namespace),
+    )
 
     helm_history = []
     helm_history_errors = []
@@ -6151,13 +6171,88 @@ def get_oaa_metrics(target, environment, progress=None):
         name = str(item or "").strip()
         if name and name not in history_releases:
             history_releases.append(name)
+    helm_history_tasks = []
     for history_release in history_releases:
         history_command = "helm history {0} -n {1}".format(
             shlex.quote(history_release),
             shlex.quote(namespace),
         )
         helm_history_commands.append(history_command)
-        history_result = run_target(target, history_command, timeout=60)
+        helm_history_tasks.append((
+            "helm_history_{0}".format(history_release),
+            lambda history_release=history_release, history_command=history_command: run_target(target, history_command, timeout=60),
+        ))
+
+    if callable(progress):
+        progress("Running OAA kubectl, helm, usage, and event probes in parallel.")
+    initial_tasks = [
+        ("pods", lambda: run_target(target, pods_json_command, timeout=60)),
+        ("ingress", lambda: run_target(target, ingress_command, timeout=60)),
+        ("namespace_resources", lambda: run_target(target, namespace_resources_command, timeout=60)),
+        ("nodes", lambda: run_target(target, nodes_json_command, timeout=60)),
+        ("helm_version", lambda: run_target(target, helm_version_command, timeout=45)),
+        ("pod_usage", lambda: run_target(target, pod_usage_command, timeout=45)),
+        ("node_usage", lambda: run_target(target, node_usage_command, timeout=45)),
+        ("events", lambda: run_target(target, events_command, timeout=60)),
+    ] + helm_history_tasks
+    initial_results = run_parallel_tasks(initial_tasks, max_workers=8)
+
+    pods_result = task_result(initial_results, "pods", {"exit_code": 1, "output": "kubectl get pods task failed."})
+    pods_payload = parse_json_payload(pods_result.get("output"))
+    pods = parse_kubernetes_pods(pods_payload) if pods_payload else []
+    pods_error = None
+    if pods_result.get("exit_code") != 0:
+        pods_error = pods_result.get("output") or "kubectl get pods failed."
+        errors.append(pods_error)
+    elif pods_payload is None:
+        pods_error = "kubectl get pods did not return JSON."
+        errors.append(pods_error)
+
+    ingress_result = task_result(initial_results, "ingress", {"exit_code": 1, "output": "kubectl get all,ing task failed."})
+    ingress_payload = parse_json_payload(ingress_result.get("output"))
+    ingress_resources = parse_kubernetes_resources(ingress_payload) if ingress_payload else []
+    ingress_error = None
+    if ingress_result.get("exit_code") != 0:
+        ingress_error = ingress_result.get("output") or "kubectl get all,ing failed."
+        errors.append(ingress_error)
+    elif ingress_payload is None:
+        ingress_error = "kubectl get all,ing did not return JSON."
+        errors.append(ingress_error)
+
+    namespace_resources_result = task_result(initial_results, "namespace_resources", {"exit_code": 1, "output": "kubectl get svc,deploy,rs,ing,pvc task failed."})
+    namespace_resources_payload = parse_json_payload(namespace_resources_result.get("output"))
+    namespace_resources = parse_kubernetes_resources(namespace_resources_payload) if namespace_resources_payload else []
+    namespace_resources_error = None
+    if namespace_resources_result.get("exit_code") != 0:
+        namespace_resources_error = namespace_resources_result.get("output") or "kubectl get svc,deploy,rs,ing,pvc failed."
+    elif namespace_resources_payload is None:
+        namespace_resources_error = "kubectl get svc,deploy,rs,ing,pvc did not return JSON."
+
+    if callable(progress):
+        progress("Collecting OAA Kubernetes node, pod usage, and warning event metrics.")
+    nodes_result = task_result(initial_results, "nodes", {"exit_code": 1, "output": "kubectl get nodes task failed."})
+    nodes_payload = parse_json_payload(nodes_result.get("output"))
+    node_inventory = parse_kubernetes_nodes(nodes_payload) if nodes_payload else []
+    nodes_error = None
+    if nodes_result.get("exit_code") != 0:
+        nodes_error = nodes_result.get("output") or "kubectl get nodes failed."
+    elif nodes_payload is None:
+        nodes_error = "kubectl get nodes did not return JSON."
+
+    helm_version_result = task_result(initial_results, "helm_version", {"exit_code": 1, "output": "helm version task failed."})
+    helm_version = parse_oaa_helm_version(helm_version_result.get("output")) if helm_version_result.get("exit_code") == 0 else {}
+    helm_version_error = None
+    if helm_version_result.get("exit_code") != 0:
+        helm_version_error = helm_version_result.get("output") or "helm version failed."
+    elif not (helm_version.get("version") or helm_version.get("raw")):
+        helm_version_error = "helm version returned no parseable version details."
+
+    for history_release in history_releases:
+        history_result = task_result(
+            initial_results,
+            "helm_history_{0}".format(history_release),
+            {"exit_code": 1, "output": "helm history task failed for {0}.".format(history_release)},
+        )
         if history_result.get("exit_code") != 0:
             helm_history_errors.append(history_result.get("output") or "helm history failed for {0}.".format(history_release))
             continue
@@ -6167,25 +6262,19 @@ def get_oaa_metrics(target, environment, progress=None):
         if not rows:
             helm_history_errors.append("helm history returned no rows for {0}.".format(history_release))
 
-    pod_usage_command = "{0} top pods -n {1} --no-headers".format(shlex.quote(kubectl), shlex.quote(namespace))
-    pod_usage_result = run_target(target, pod_usage_command, timeout=45)
+    pod_usage_result = task_result(initial_results, "pod_usage", {"exit_code": 1, "output": "kubectl top pods task failed."})
     pod_resource_usage = parse_kubectl_top_rows(pod_usage_result.get("output"), "pods") if pod_usage_result.get("exit_code") == 0 else []
     pod_usage_error = None
     if pod_usage_result.get("exit_code") != 0:
         pod_usage_error = pod_usage_result.get("output") or "kubectl top pods failed. Kubernetes metrics-server may not be installed."
 
-    node_usage_command = "{0} top nodes --no-headers".format(shlex.quote(kubectl))
-    node_usage_result = run_target(target, node_usage_command, timeout=45)
+    node_usage_result = task_result(initial_results, "node_usage", {"exit_code": 1, "output": "kubectl top nodes task failed."})
     node_resource_usage = parse_kubectl_top_rows(node_usage_result.get("output"), "nodes") if node_usage_result.get("exit_code") == 0 else []
     node_usage_error = None
     if node_usage_result.get("exit_code") != 0:
         node_usage_error = node_usage_result.get("output") or "kubectl top nodes failed. Kubernetes metrics-server may not be installed."
 
-    events_command = "{0} get events -n {1} --sort-by=.lastTimestamp -o json".format(
-        shlex.quote(kubectl),
-        shlex.quote(namespace),
-    )
-    events_result = run_target(target, events_command, timeout=60)
+    events_result = task_result(initial_results, "events", {"exit_code": 1, "output": "kubectl get events task failed."})
     events_payload = parse_json_payload(events_result.get("output"))
     warning_events = parse_kubernetes_events(events_payload) if events_payload else []
     events_error = None
@@ -6198,21 +6287,19 @@ def get_oaa_metrics(target, environment, progress=None):
     describe_command = ""
     describe_output = ""
     describe_error = None
+    describe_result = None
     if describe_pod_name:
         describe_command = "{0} describe pod {1} -n {2}".format(
             shlex.quote(kubectl),
             shlex.quote(describe_pod_name),
             shlex.quote(namespace),
         )
-        describe_result = run_target(target, describe_command, timeout=60)
-        describe_output = redact_oaa_sensitive_text(describe_result.get("output") or "")
-        if describe_result.get("exit_code") != 0:
-            describe_error = describe_output or "kubectl describe pod failed."
 
     log_command = ""
     log_output = ""
     log_error = None
     log_pod_name = describe_pod_name
+    log_result = None
     if log_pod_name:
         log_command = "{0} logs {1} -n {2} --tail={3}".format(
             shlex.quote(kubectl),
@@ -6220,7 +6307,19 @@ def get_oaa_metrics(target, environment, progress=None):
             shlex.quote(namespace),
             int(log_tail_lines),
         )
-        log_result = run_target(target, log_command, timeout=60)
+    pod_detail_tasks = []
+    if describe_command:
+        pod_detail_tasks.append(("describe", lambda: run_target(target, describe_command, timeout=60)))
+    if log_command:
+        pod_detail_tasks.append(("log", lambda: run_target(target, log_command, timeout=60)))
+    pod_detail_results = run_parallel_tasks(pod_detail_tasks, max_workers=2)
+    if describe_command:
+        describe_result = task_result(pod_detail_results, "describe", {"exit_code": 1, "output": "kubectl describe pod task failed."})
+        describe_output = redact_oaa_sensitive_text(describe_result.get("output") or "")
+        if describe_result.get("exit_code") != 0:
+            describe_error = describe_output or "kubectl describe pod failed."
+    if log_command:
+        log_result = task_result(pod_detail_results, "log", {"exit_code": 1, "output": "kubectl logs task failed."})
         log_output = redact_oaa_sensitive_text(log_result.get("output") or "")
         if log_result.get("exit_code") != 0:
             log_error = log_output or "kubectl logs failed."
@@ -6233,6 +6332,8 @@ def get_oaa_metrics(target, environment, progress=None):
     install_config = host_install_config
     install_config_values = dict(host_install_values)
     install_config_error = host_install_error
+    deployment_result = None
+    config_result = None
     if mgmt_pod_name:
         script_command = "cd ~/scripts && ./printOAADetails.sh -f settings/installOAA.properties"
         deployment_details_command = "{0} exec -n {1} {2} -- /bin/bash -lc {3}".format(
@@ -6241,10 +6342,6 @@ def get_oaa_metrics(target, environment, progress=None):
             shlex.quote(mgmt_pod_name),
             shlex.quote(script_command),
         )
-        deployment_result = run_target(target, deployment_details_command, timeout=90)
-        deployment_details = parse_oaa_deployment_details(deployment_result.get("output"))
-        if deployment_result.get("exit_code") != 0:
-            deployment_details_error = deployment_result.get("output") or "printOAADetails.sh failed."
 
         if not install_config:
             config_script = (
@@ -6259,15 +6356,6 @@ def get_oaa_metrics(target, environment, progress=None):
                 shlex.quote(mgmt_pod_name),
                 shlex.quote(config_script),
             )
-            config_result = run_target(target, install_config_command, timeout=45)
-            install_config = parse_oaa_install_properties(config_result.get("output"))
-            install_config_values = parse_oaa_property_file_values(config_result.get("output"))
-            if config_result.get("exit_code") != 0:
-                install_config_error = config_result.get("output") or "installOAA.properties collection failed."
-            elif not install_config:
-                install_config_error = "installOAA.properties was found, but no dashboard-visible configuration keys were parsed."
-            else:
-                install_config_error = None
     elif pods:
         deployment_details_error = "OAA management pod was not found in namespace {0}.".format(namespace)
         if not install_config:
@@ -6282,6 +6370,7 @@ def get_oaa_metrics(target, environment, progress=None):
     helm_command = ""
     helm_releases = []
     helm_error = None
+    mgmt_tasks = []
     if mgmt_pod_name:
         status_script = "cat /u01/oracle/logs/status.info 2>/dev/null || true"
         installation_status_command = "{0} exec -n {1} {2} -- /bin/bash -lc {3}".format(
@@ -6290,10 +6379,10 @@ def get_oaa_metrics(target, environment, progress=None):
             shlex.quote(mgmt_pod_name),
             shlex.quote(status_script),
         )
-        status_result = run_target(target, installation_status_command, timeout=45)
-        installation_status = parse_oaa_deployment_details(status_result.get("output"))
-        if status_result.get("exit_code") != 0:
-            installation_status_error = status_result.get("output") or "status.info collection failed."
+        mgmt_tasks.append(("deployment", lambda: run_target(target, deployment_details_command, timeout=90)))
+        if install_config_command and not install_config:
+            mgmt_tasks.append(("install_config", lambda: run_target(target, install_config_command, timeout=45)))
+        mgmt_tasks.append(("status", lambda: run_target(target, installation_status_command, timeout=45)))
 
         log_script = (
             "for f in /u01/oracle/logs/install.log /u01/oracle/logs/status.info; do "
@@ -6306,10 +6395,7 @@ def get_oaa_metrics(target, environment, progress=None):
             shlex.quote(mgmt_pod_name),
             shlex.quote(log_script),
         )
-        management_log_result = run_target(target, management_log_command, timeout=45)
-        management_log_output = redact_oaa_sensitive_text(management_log_result.get("output") or "")
-        if management_log_result.get("exit_code") != 0:
-            management_log_error = management_log_output or "OAA management log tail failed."
+        mgmt_tasks.append(("management_log", lambda: run_target(target, management_log_command, timeout=45)))
 
         helm_script = "helm list -n {0} -o json".format(shlex.quote(namespace))
         helm_command = "{0} exec -n {1} {2} -- /bin/bash -lc {3}".format(
@@ -6318,7 +6404,36 @@ def get_oaa_metrics(target, environment, progress=None):
             shlex.quote(mgmt_pod_name),
             shlex.quote(helm_script),
         )
-        helm_result = run_target(target, helm_command, timeout=60)
+        mgmt_tasks.append(("helm", lambda: run_target(target, helm_command, timeout=60)))
+        mgmt_results = run_parallel_tasks(mgmt_tasks, max_workers=5)
+
+        deployment_result = task_result(mgmt_results, "deployment", {"exit_code": 1, "output": "printOAADetails.sh task failed."})
+        deployment_details = parse_oaa_deployment_details(deployment_result.get("output"))
+        if deployment_result.get("exit_code") != 0:
+            deployment_details_error = deployment_result.get("output") or "printOAADetails.sh failed."
+
+        if install_config_command and not install_config:
+            config_result = task_result(mgmt_results, "install_config", {"exit_code": 1, "output": "installOAA.properties task failed."})
+            install_config = parse_oaa_install_properties(config_result.get("output"))
+            install_config_values = parse_oaa_property_file_values(config_result.get("output"))
+            if config_result.get("exit_code") != 0:
+                install_config_error = config_result.get("output") or "installOAA.properties collection failed."
+            elif not install_config:
+                install_config_error = "installOAA.properties was found, but no dashboard-visible configuration keys were parsed."
+            else:
+                install_config_error = None
+
+        status_result = task_result(mgmt_results, "status", {"exit_code": 1, "output": "status.info task failed."})
+        installation_status = parse_oaa_deployment_details(status_result.get("output"))
+        if status_result.get("exit_code") != 0:
+            installation_status_error = status_result.get("output") or "status.info collection failed."
+
+        management_log_result = task_result(mgmt_results, "management_log", {"exit_code": 1, "output": "OAA management log tail task failed."})
+        management_log_output = redact_oaa_sensitive_text(management_log_result.get("output") or "")
+        if management_log_result.get("exit_code") != 0:
+            management_log_error = management_log_output or "OAA management log tail failed."
+
+        helm_result = task_result(mgmt_results, "helm", {"exit_code": 1, "output": "helm list task failed."})
         helm_releases = parse_oaa_helm_releases(helm_result.get("output"))
         if helm_result.get("exit_code") != 0:
             helm_error = helm_result.get("output") or "helm list failed in the OAA management pod."
@@ -8321,15 +8436,28 @@ def get_product_metrics(target, environment, app_checks, progress=None):
         if oracle_home:
             background_executor = ThreadPoolExecutor(max_workers=4)
             opatch_label = "OIG/OIM" if products.get("oig") else ("OAM" if products.get("oam") else "WebLogic")
-            opatch_future = background_executor.submit(collect_opatch_inventory, oig_target, oracle_home, progress, opatch_label)
-            if domain_home:
+
+            path_resolution = resolve_fmw_home_paths(oig_target, oracle_home, domain_home, progress=progress)
+            resolved_oracle_home = str(path_resolution.get("oracleHome") or oracle_home).strip()
+            resolved_domain_home = str(path_resolution.get("domainHome") or domain_home).strip()
+            if path_resolution.get("warning") and callable(progress):
+                progress(path_resolution.get("warning"))
+
+            opatch_future = background_executor.submit(
+                collect_opatch_inventory,
+                oig_target,
+                resolved_oracle_home,
+                progress,
+                opatch_label,
+            )
+            if resolved_domain_home:
                 keystore_target = dict(oig_target)
                 keystore_target["sudoRequired"] = False
                 keystore_future = background_executor.submit(
                     collect_keystore_certificates,
                     keystore_target,
-                    oracle_home,
-                    domain_home,
+                    resolved_oracle_home,
+                    resolved_domain_home,
                     progress,
                 )
     try:

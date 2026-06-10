@@ -200,6 +200,36 @@ def build_help_details():
                 "command": "sudo tail -F {0}".format(os.path.join(LOG_DIR, "scheduler.log")),
             },
         ],
+        "uninstallCommands": [
+            {
+                "label": "Stop services",
+                "command": "sudo systemctl stop {0} {1} 2>/dev/null || true".format(SERVICE_NAME, UPGRADE_SERVICE_NAME),
+            },
+            {
+                "label": "Disable services",
+                "command": "sudo systemctl disable {0} {1} 2>/dev/null || true".format(SERVICE_NAME, UPGRADE_SERVICE_NAME),
+            },
+            {
+                "label": "Remove service units and cron",
+                "command": "sudo rm -f {0} {1} {2}".format(SERVICE_FILE_PATH, UPGRADE_SERVICE_FILE_PATH, CRON_FILE_PATH),
+            },
+            {
+                "label": "Reload systemd",
+                "command": "sudo systemctl daemon-reload",
+            },
+            {
+                "label": "Remove application files",
+                "command": "sudo rm -rf {0}".format(APP_ROOT),
+            },
+            {
+                "label": "Optional: remove runtime config and customer state",
+                "command": "sudo rm -f {0} && sudo rm -rf {1} {2}".format(CONFIG_FILE_PATH, state_dir, LOG_DIR),
+            },
+            {
+                "label": "Optional: remove service user",
+                "command": "sudo userdel {0} 2>/dev/null || true".format(os.environ.get("IAM_MONITORING_SERVICE_USER", SERVICE_NAME)),
+            },
+        ],
         "notes": [
             "This dashboard is installed as a Linux systemd service and uses a host cron scheduler for due environment collectors.",
             "Administration is where environments, notifications, and support details live. Environment pages stay focused on that selected IAM environment.",
