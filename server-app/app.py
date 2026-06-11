@@ -261,6 +261,57 @@ def github_version_url():
     )
 
 
+def github_version_api_url():
+    return "https://api.github.com/repos/{0}/{1}/contents/server-app/VERSION?ref={2}".format(
+        GITHUB_OWNER,
+        GITHUB_REPO,
+        GITHUB_BRANCH,
+    )
+
+
+def open_update_check_url(url, proxy_settings):
+    request = Request(
+        url,
+        headers={
+            "User-Agent": "iam-monitoring-update-check",
+            "Cache-Control": "no-cache",
+            "Pragma": "no-cache",
+        },
+    )
+    proxy_handler_settings = {}
+    if proxy_settings.get("httpProxy"):
+        proxy_handler_settings["http"] = proxy_settings.get("httpProxy")
+    if proxy_settings.get("httpsProxy"):
+        proxy_handler_settings["https"] = proxy_settings.get("httpsProxy")
+    if proxy_handler_settings:
+        opener = build_opener(ProxyHandler(proxy_handler_settings))
+        return opener.open(request, timeout=8)
+    return urlopen(request, timeout=8)
+
+
+def read_github_version(proxy_settings):
+    errors = []
+    try:
+        with open_update_check_url(github_version_url(), proxy_settings) as response:
+            remote_version = response.read().decode("utf-8").strip()
+        if remote_version:
+            return remote_version, github_version_url(), ""
+        errors.append("raw VERSION response was empty")
+    except Exception as exc:
+        errors.append("raw VERSION failed: {0}".format(str(exc)))
+    try:
+        with open_update_check_url(github_version_api_url(), proxy_settings) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        encoded = str(payload.get("content") or "")
+        content = base64.b64decode(encoded.encode("utf-8")).decode("utf-8").strip()
+        if content:
+            return content, github_version_api_url(), "; ".join(errors)
+        errors.append("GitHub contents API returned empty VERSION content")
+    except Exception as exc:
+        errors.append("GitHub contents API failed: {0}".format(str(exc)))
+    raise ValueError("; ".join(errors) or "GitHub did not return a VERSION value.")
+
+
 def build_github_upgrade_response(status_payload):
     return {
         "enabled": True,
@@ -428,22 +479,11 @@ def build_update_check_payload():
         "proxySourceLabel": proxy_context.get("sourceLabel") or "No proxy configured",
     }
     try:
-        request = Request(payload["versionUrl"], headers={"User-Agent": "iam-monitoring-update-check"})
-        proxy_handler_settings = {}
-        if proxy_settings.get("httpProxy"):
-            proxy_handler_settings["http"] = proxy_settings.get("httpProxy")
-        if proxy_settings.get("httpsProxy"):
-            proxy_handler_settings["https"] = proxy_settings.get("httpsProxy")
-        if proxy_handler_settings:
-            opener = build_opener(ProxyHandler(proxy_handler_settings))
-            response_handle = opener.open(request, timeout=6)
-        else:
-            response_handle = urlopen(request, timeout=6)
-        with response_handle as response:
-            remote_version = response.read().decode("utf-8").strip()
-        if not remote_version:
-            raise ValueError("GitHub did not return a VERSION value.")
+        remote_version, version_source_url, version_warning = read_github_version(proxy_settings)
         payload["remoteVersion"] = remote_version
+        payload["versionSourceUrl"] = version_source_url
+        if version_warning:
+            payload["versionWarning"] = version_warning
         comparison = compare_version_values(current_version, remote_version)
         if comparison == 0:
             payload["status"] = "current"
