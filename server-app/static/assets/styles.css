@@ -5344,3 +5344,103 @@ tbody tr:last-child td {
         grid-template-columns: 1fr;
     }
 }
+
+@media (max-width: 1500px) {
+    body {
+        font-size: 14px;
+    }
+
+    .oracle-wordmark {
+        font-size: 1.32rem;
+    }
+
+    .topbar-title {
+        font-size: 1rem;
+    }
+
+    .topbar-update-button {
+        min-height: 34px;
+        padding: 0 10px;
+    }
+
+    .topbar-update-status {
+        min-height: 26px;
+        padding: 0 8px;
+        font-size: 0.72rem;
+    }
+
+    .topbar-context select {
+        min-width: 220px;
+        min-height: 34px;
+    }
+
+    .workspace-shell {
+        grid-template-columns: 210px minmax(0, 1fr);
+    }
+
+    .workspace-sidebar {
+        padding: 16px 10px;
+    }
+
+    .modal-shell {
+        width: min(820px, calc(100vw - 64px));
+        max-height: calc(100vh - 32px);
+        border-radius: 14px;
+    }
+
+    .modal-header {
+        padding: 16px 18px 12px;
+    }
+
+    .modal-title {
+        font-size: 1.18rem;
+        margin-bottom: 4px;
+    }
+
+    .modal-copy,
+    .field-hint {
+        font-size: 0.78rem;
+        line-height: 1.35;
+    }
+
+    .modal-body {
+        padding: 16px 18px;
+    }
+
+    .form-grid {
+        gap: 10px 12px;
+    }
+
+    .field {
+        gap: 5px;
+    }
+
+    .field input,
+    .field select,
+    .field textarea {
+        min-height: 34px;
+        padding: 7px 10px;
+    }
+}
+
+@media (max-width: 1180px) {
+    .workspace-shell {
+        grid-template-columns: 170px minmax(0, 1fr);
+    }
+
+    .modal-shell {
+        width: min(760px, calc(100vw - 48px));
+    }
+
+    .form-grid,
+    .form-grid.three-column,
+    .oig-detail-grid,
+    .oaa-detail-grid,
+    .oud-detail-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .field-span-2 {
+        grid-column: auto;
+    }
+}
