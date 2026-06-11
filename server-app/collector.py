@@ -8038,16 +8038,15 @@ def build_oam_keystore_password_script(admin_username, admin_password, deploymen
         "except:\n"
         "    import sys\n"
         "    print('IAM_MONITORING_OAM_KEYPASS_ERROR|domainRuntime: ' + str(sys.exc_info()[1]))\n"
-        "def emit_password(value):\n"
+        "def emit_password(map_name, key_name, value):\n"
         "    try:\n"
         "        if value is None:\n"
         "            return\n"
-        "        print('Password=' + ''.join([str(ch) for ch in value]))\n"
+        "        print('Password|' + str(map_name) + '|' + str(key_name) + '=' + ''.join([str(ch) for ch in value]))\n"
         "    except:\n"
-        "        print('Password=' + str(value))\n"
+        "        print('Password|' + str(map_name) + '|' + str(key_name) + '=' + str(value))\n"
         "credential_maps = ['OAM_STORE', 'oracle.oam.OAMStore', 'OAMStore', 'oracle.oam', 'oracle.oam.security', 'oam']\n"
-        "credential_keys = ['JKS', 'jks', 'amtruststore', 'AMTrustStore', 'amtruststore.password', 'defaulttrustcastore', 'defaulttrustcastorepassword', 'stskeystorepassword', 'stskeystore', 'osts_signing_template', 'osts_encryption_template', 'osts_signing', 'osts_encryption', 'wlsclientsslkeystorepwd', 'clientsslkeystorepwd', 'wlsclientsslkeystore', 'clientsslkeystore', 'jcesignkeystore', 'jceenckeystore', 'jceSignKeyStore', 'jceEncKeyStore', 'keystore', 'KEYSTORE', 'storepass']\n"
-        "found_password = 0\n"
+        "credential_keys = ['JKS', 'jks', 'amtruststore', 'AMTrustStore', 'amtruststore.password', 'amtruststore.passphrase', '.oamkeystore', 'oamkeystore', 'OAMKeyStore', 'oamkeystore.password', 'oamkeystore.passphrase', 'OAM_KEYSTORE', 'defaulttrustcastore', 'defaulttrustcastorepassword', 'stskeystorepassword', 'stskeystore', 'osts_signing_template', 'osts_encryption_template', 'osts_signing', 'osts_encryption', 'wlsclientsslkeystorepwd', 'clientsslkeystorepwd', 'wlsclientsslkeystore', 'clientsslkeystore', 'jcesignkeystore', 'jceenckeystore', 'jceSignKeyStore', 'jceEncKeyStore', 'keystore', 'KEYSTORE', 'storepass', 'password']\n"
         "for map_name in credential_maps:\n"
         "    for key_name in credential_keys:\n"
         "        try:\n"
@@ -8064,15 +8063,10 @@ def build_oam_keystore_password_script(admin_username, admin_password, deploymen
         "            except:\n"
         "                password = cred\n"
         "            if password is not None:\n"
-        "                emit_password(password)\n"
-        "                found_password = 1\n"
+        "                emit_password(map_name, key_name, password)\n"
         "        except Exception, exc:\n"
             "            import sys\n"
             "            print('IAM_MONITORING_OAM_KEYPASS_ERROR|getCred ' + map_name + '/' + key_name + ': ' + str(sys.exc_info()[1]))\n"
-        "        if found_password:\n"
-        "            break\n"
-        "    if found_password:\n"
-        "        break\n"
         "print('IAM_MONITORING_OAM_KEYPASS_END')\n"
         "try:\n"
         "    disconnect()\n"
@@ -8114,7 +8108,7 @@ def normalize_oam_keystore_password_candidate(value):
     return value
 
 
-def parse_oam_keystore_password_output(text):
+def parse_oam_keystore_password_candidates(text):
     capture = False
     captured = []
     for raw_line in str(text or "").splitlines():
@@ -8128,16 +8122,27 @@ def parse_oam_keystore_password_output(text):
         if capture:
             captured.append(line)
     probe = "\n".join(captured)
+    candidates = []
+    seen = set()
     for pattern in (
+        r"(?im)^\s*Password\|[^=]+=\s*(.+?)\s*$",
         r"(?im)^\s*Password\s*[:=]\s*(.+?)\s*$",
         r"(?im)^\s*password\s*[:=]\s*(.+?)\s*$",
         r"(?im)^\s*passphrase\s*[:=]\s*(.+?)\s*$",
     ):
-        match = re.search(pattern, probe)
-        if match:
+        for match in re.finditer(pattern, probe):
             value = normalize_oam_keystore_password_candidate(match.group(1))
-            if value:
-                return value
+            key = value.lower()
+            if value and key not in seen:
+                seen.add(key)
+                candidates.append(value)
+    return candidates
+
+
+def parse_oam_keystore_password_output(text):
+    candidates = parse_oam_keystore_password_candidates(text)
+    if candidates:
+        return candidates[0]
     return ""
 
 
@@ -8157,9 +8162,9 @@ def collect_oam_keystore_password(target, oracle_home, admin_username, admin_pas
         build_oam_keystore_password_script(admin_username, admin_password, deployment_connect_url),
         timeout=120,
     )
-    password = parse_oam_keystore_password_output(result.get("output"))
-    if password:
-        return password, ""
+    passwords = parse_oam_keystore_password_candidates(result.get("output"))
+    if passwords:
+        return "\n".join(passwords), ""
     output = str(result.get("output") or "").strip()
     if result.get("exit_code") != 0:
         return "", output or "WLST credential-store lookup failed."
@@ -8191,7 +8196,7 @@ def collect_oam_keystore_certificates(target, oracle_home, domain_home, admin_us
         return [], "OAM ORACLE_HOME or DOMAIN_HOME is required for amtruststore and .oamkeystore discovery."
     if callable(progress):
         progress("Discovering OAM amtruststore and .oamkeystore certificate entries.")
-    credential_store_password, credential_store_error = collect_oam_keystore_password(
+    credential_store_passwords, credential_store_error = collect_oam_keystore_password(
         target,
         oracle_home,
         admin_username,
@@ -8200,7 +8205,7 @@ def collect_oam_keystore_certificates(target, oracle_home, domain_home, admin_us
         progress=progress,
     )
     command = (
-        "OH=__ORACLE_HOME__; DH=__DOMAIN_HOME__; WLST_OAM_STOREPASS=__OAM_STOREPASS__; "
+        "OH=__ORACLE_HOME__; DH=__DOMAIN_HOME__; WLST_OAM_STOREPASS_FILE=/tmp/iam-monitoring-oam-storepass-$$.txt; cat >\"$WLST_OAM_STOREPASS_FILE\" <<'IAMOAMSTOREPASS'\n__OAM_STOREPASS__\nIAMOAMSTOREPASS\n"
         "find_keytool(){ for candidate in \"$OH/oracle_common/jdk/bin/keytool\" \"$OH/jdk/bin/keytool\" \"$(dirname \"$OH\")/jdk/bin/keytool\"; do "
         "if [ -x \"$candidate\" ]; then printf '%s\n' \"$candidate\"; return 0; fi; done; command -v keytool 2>/dev/null || true; }; "
         "KEYTOOL=$(find_keytool); "
@@ -8214,9 +8219,16 @@ def collect_oam_keystore_certificates(target, oracle_home, domain_home, admin_us
         "success=0; last_error=''; "
         "type_tokens='JKS JCEKS PKCS12 NONE'; [ \"$name\" = '.oamkeystore' ] && type_tokens='JCEKS JKS PKCS12 NONE'; "
         "for type_token in $type_tokens; do "
-        "for pass_token in WLST EMPTY changeit welcome1 Welcome1 password DemoIdentityKeyStorePassPhrase DemoTrustKeyStorePassPhrase DemoIdentityPassPhrase; do "
+        "for pass_token in WLST_FILE EMPTY changeit welcome1 Welcome1 password DemoIdentityKeyStorePassPhrase DemoTrustKeyStorePassPhrase DemoIdentityPassPhrase; do "
         "storetype_args=''; [ \"$type_token\" != 'NONE' ] && storetype_args=\"-storetype $type_token\"; "
-        "if [ \"$pass_token\" = 'WLST' ]; then storepass=\"$WLST_OAM_STOREPASS\"; [ -n \"$storepass\" ] || continue; "
+        "if [ \"$pass_token\" = 'WLST_FILE' ]; then [ -s \"$WLST_OAM_STOREPASS_FILE\" ] || continue; "
+        "while IFS= read -r storepass || [ -n \"$storepass\" ]; do "
+        "[ -n \"$storepass\" ] || continue; "
+        "out=\"/tmp/iam-monitoring-oam-keytool-$$-$(printf '%s' \"$name-$type_token-wlst\" | tr -cd 'A-Za-z0-9_.-').out\"; "
+        "timeout 25 \"$KEYTOOL\" -list -v -keystore \"$path\" $storetype_args -storepass \"$storepass\" >\"$out\" 2>&1; rc=$?; "
+        "if [ \"$rc\" -eq 0 ]; then echo \"OAM_KEYSTORE_BEGIN|$name|$path\"; cat \"$out\" 2>/dev/null || true; echo \"OAM_KEYSTORE_END|$name|0\"; rm -f \"$out\"; success=1; break; fi; "
+        "last_error=$(head -n 4 \"$out\" 2>/dev/null | tr '\n' ' '); rm -f \"$out\"; "
+        "done <\"$WLST_OAM_STOREPASS_FILE\"; [ \"$success\" -eq 1 ] && break 2; continue; "
         "elif [ \"$pass_token\" = 'EMPTY' ]; then storepass=''; "
         "else storepass=\"$pass_token\"; fi; "
         "out=\"/tmp/iam-monitoring-oam-keytool-$$-$(printf '%s' \"$name-$type_token-$pass_token\" | tr -cd 'A-Za-z0-9_.-').out\"; "
@@ -8232,7 +8244,8 @@ def collect_oam_keystore_certificates(target, oracle_home, domain_home, admin_us
         "echo \"OAM_KEYSTORE_END|$name|1\"; "
         "fi; "
         "done"
-    ).replace("__ORACLE_HOME__", shlex.quote(oracle_home)).replace("__DOMAIN_HOME__", shlex.quote(domain_home)).replace("__OAM_STOREPASS__", shlex.quote(credential_store_password))
+        "; rm -f \"$WLST_OAM_STOREPASS_FILE\""
+    ).replace("__ORACLE_HOME__", shlex.quote(oracle_home)).replace("__DOMAIN_HOME__", shlex.quote(domain_home)).replace("__OAM_STOREPASS__", credential_store_passwords)
     result = run_target(target, command, timeout=75)
     rows = []
     errors = []
