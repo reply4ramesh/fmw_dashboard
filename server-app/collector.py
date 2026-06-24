@@ -8665,8 +8665,77 @@ def target_status(server, app_checks, product_metrics=None):
     return combine_statuses(app_status, product_metrics_status(product_metrics), server_health_status)
 
 
+def refresh_saved_opatch_recommendations(dashboard_payload):
+    dashboard_payload = dict(dashboard_payload or {})
+    environment = dashboard_payload.get("environment") or {}
+    product_metrics = dict(dashboard_payload.get("productMetrics") or {})
+
+    def oracle_home_for(product_key, metrics):
+        metrics = metrics or {}
+        product_settings = environment.get(product_key) or {}
+        weblogic_settings = environment.get("weblogic") or {}
+        if product_key in ("oam", "weblogic"):
+            return (
+                product_settings.get("oracleHome")
+                or weblogic_settings.get("oracleHome")
+                or metrics.get("oracleHome")
+                or ""
+            )
+        return (
+            product_settings.get("oracleHome")
+            or metrics.get("oracleHome")
+            or weblogic_settings.get("oracleHome")
+            or ""
+        )
+
+    def refresh_opatch(opatch, oracle_home):
+        if not isinstance(opatch, dict):
+            return opatch
+        if not (
+            opatch.get("patches")
+            or opatch.get("versions")
+            or opatch.get("products")
+            or opatch.get("distributions")
+        ):
+            return opatch
+        opatch = dict(opatch)
+        recommendation = build_fmw_patch_recommendation(opatch, environment, oracle_home)
+        opatch["recommendation"] = recommendation
+        opatch["patchComparisonRows"] = recommendation.get("comparisonRows", [])
+        return opatch
+
+    for product_key in ("weblogic", "oam", "oig", "oud", "oid"):
+        metrics = product_metrics.get(product_key)
+        if not isinstance(metrics, dict):
+            continue
+        metrics = dict(metrics)
+        oracle_home = oracle_home_for(product_key, metrics)
+        metrics["opatch"] = refresh_opatch(metrics.get("opatch"), oracle_home)
+        if product_key == "weblogic":
+            cluster_nodes = []
+            changed_nodes = False
+            for node in metrics.get("clusterNodes") or []:
+                if not isinstance(node, dict):
+                    cluster_nodes.append(node)
+                    continue
+                node = dict(node)
+                node_home = node.get("oracleHome") or oracle_home
+                refreshed = refresh_opatch(node.get("opatch"), node_home)
+                if refreshed is not node.get("opatch"):
+                    changed_nodes = True
+                node["opatch"] = refreshed
+                cluster_nodes.append(node)
+            if changed_nodes:
+                metrics["clusterNodes"] = cluster_nodes
+        product_metrics[product_key] = metrics
+
+    dashboard_payload["productMetrics"] = product_metrics
+    return dashboard_payload
+
+
 def hydrate_dashboard_payload(dashboard_payload):
     dashboard_payload = dict(dashboard_payload or {})
+    dashboard_payload = refresh_saved_opatch_recommendations(dashboard_payload)
     server = dict(dashboard_payload.get("server") or {})
     if server and not server.get("health"):
         server["health"] = build_server_health(server)
