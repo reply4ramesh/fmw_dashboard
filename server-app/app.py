@@ -292,14 +292,6 @@ def open_update_check_url(url, proxy_settings):
 def read_github_version(proxy_settings):
     errors = []
     try:
-        with open_update_check_url(github_version_url(), proxy_settings) as response:
-            remote_version = response.read().decode("utf-8").strip()
-        if remote_version:
-            return remote_version, github_version_url(), ""
-        errors.append("raw VERSION response was empty")
-    except Exception as exc:
-        errors.append("raw VERSION failed: {0}".format(str(exc)))
-    try:
         with open_update_check_url(github_version_api_url(), proxy_settings) as response:
             payload = json.loads(response.read().decode("utf-8"))
         encoded = str(payload.get("content") or "")
@@ -309,6 +301,15 @@ def read_github_version(proxy_settings):
         errors.append("GitHub contents API returned empty VERSION content")
     except Exception as exc:
         errors.append("GitHub contents API failed: {0}".format(str(exc)))
+    raw_version_url = "{0}?t={1}".format(github_version_url(), int(time.time()))
+    try:
+        with open_update_check_url(raw_version_url, proxy_settings) as response:
+            remote_version = response.read().decode("utf-8").strip()
+        if remote_version:
+            return remote_version, github_version_url(), "; ".join(errors)
+        errors.append("raw VERSION response was empty")
+    except Exception as exc:
+        errors.append("raw VERSION failed: {0}".format(str(exc)))
     raise ValueError("; ".join(errors) or "GitHub did not return a VERSION value.")
 
 
