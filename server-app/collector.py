@@ -2062,8 +2062,8 @@ DEFAULT_FMW_PATCH_BASELINES = {
     "12c": {
         "family": "12c",
         "version": "12.2.1.4.0",
-        "latestRelease": "April 2026 12.2.1.4.260417 SPB",
-        "latestPatch": _patch_row("April 2026 12.2.1.4.260417 SPB", "39221245", ALL_IDM_COMPONENTS),
+        "latestRelease": "June 2026 12.2.1.4.260609 SPB",
+        "latestPatch": _patch_row("IDM STACK PATCH BUNDLE 12.2.1.4.260609", "39525460", ALL_IDM_COMPONENTS),
         "patches": [
             _patch_row("MERGE REQUEST ON TOP OF 12.2.1.4.0 FOR BUGS 34065178 34113169", "36649916", ALL_IDM_COMPONENTS),
             _patch_row("OIM 12CPS3 UPGRADE STUCK AT SCHEMAREADINESSQUERIES QUERYINDEXNAMES", "32999272", ALL_IDM_COMPONENTS),
@@ -2100,8 +2100,8 @@ DEFAULT_FMW_PATCH_BASELINES = {
     "14c": {
         "family": "14c",
         "version": "14.1.2.1",
-        "latestRelease": "April 2026 14.1.2.1.260410 SPB",
-        "latestPatch": _patch_row("April 2026 14.1.2.1.260410 SPB", "39194734", ALL_IDM_COMPONENTS),
+        "latestRelease": "June 2026 14.1.2.1.260609 SPB",
+        "latestPatch": _patch_row("IDM STACK PATCH BUNDLE 14.1.2.1.260609", "39526335", ALL_IDM_COMPONENTS),
         "patches": [
             _patch_row("MERGE REQUEST ON TOP OF 14.1.2.0.0 FOR BUGS 37571450 37359866", "37632501", ALL_IDM_COMPONENTS),
             _patch_row("Unable to Retrieve Request Details by REST Client With End User", "37512243", ["OIG"]),
