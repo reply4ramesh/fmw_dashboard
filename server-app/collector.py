@@ -8313,57 +8313,83 @@ def get_oam_metrics(target, environment, app_checks, weblogic_metrics=None, opat
     oracle_home = str(weblogic_metrics.get("oracleHome") or weblogic.get("oracleHome") or oam.get("oracleHome") or "").strip()
     domain_home = str(weblogic_metrics.get("domainHome") or weblogic.get("domainHome") or oam.get("domainHome") or "").strip()
     oam_target = build_weblogic_target(environment, target)
-    if opatch_future is not None:
-        try:
-            opatch = opatch_future.result()
-        except Exception as exc:
-            opatch = {"error": str(exc), "versions": [], "products": [], "patches": []}
-    else:
-        opatch = collect_opatch_inventory(oam_target, oracle_home, progress=progress, label="OAM")
+    if callable(progress):
+        progress("Running OAM OPatch, certificate, and configuration probes in parallel.")
+
+    def read_opatch():
+        if opatch_future is not None:
+            try:
+                return opatch_future.result()
+            except Exception as exc:
+                return {"error": str(exc), "versions": [], "products": [], "patches": []}
+        return collect_opatch_inventory(oam_target, oracle_home, progress=progress, label="OAM")
+
+    initial_results = run_parallel_tasks([
+        ("opatch", read_opatch),
+        ("certificates", lambda: collect_ssl_certificates(
+            oam_target,
+            weblogic_metrics.get("serverInventory") or [],
+            oracle_home=oracle_home,
+            domain_home=domain_home,
+            progress=progress,
+            keystore_future=keystore_future,
+        )),
+        ("config", lambda: collect_oam_config_metrics(oam_target, oracle_home, domain_home, progress=progress)),
+    ], max_workers=3)
+
+    opatch = task_result(initial_results, "opatch", {"versions": [], "products": [], "patches": []})
     opatch["recommendation"] = build_fmw_patch_recommendation(opatch, environment, oracle_home)
     opatch["patchComparisonRows"] = opatch["recommendation"].get("comparisonRows", [])
-    certificates, certificate_error = collect_ssl_certificates(
-        oam_target,
-        weblogic_metrics.get("serverInventory") or [],
-        oracle_home=oracle_home,
-        domain_home=domain_home,
-        progress=progress,
-        keystore_future=keystore_future,
-    )
-    config = collect_oam_config_metrics(oam_target, oracle_home, domain_home, progress=progress)
+    certificates, certificate_error = task_result(initial_results, "certificates", ([], "OAM certificate collection task failed."))
+    config = task_result(initial_results, "config", {"groups": {}, "summary": {}, "curated": {}, "error": "OAM config collection task failed."})
     curated_config = config.get("curated") or {}
-    oam_keystore_certificates, oam_keystore_error = collect_oam_keystore_certificates(
-        oam_target,
-        oracle_home,
-        domain_home,
-        admin_username=weblogic.get("adminUsername") or "weblogic",
-        admin_password=weblogic.get("adminPassword") or "",
-        admin_url=weblogic.get("adminUrl") or "",
-        progress=progress,
+
+    if callable(progress):
+        progress("Running OAM port, OAuth REST, WLST, and keystore probes in parallel.")
+
+    secondary_results = run_parallel_tasks([
+        ("oam_keystore", lambda: collect_oam_keystore_certificates(
+            oam_target,
+            oracle_home,
+            domain_home,
+            admin_username=weblogic.get("adminUsername") or "weblogic",
+            admin_password=weblogic.get("adminPassword") or "",
+            admin_url=weblogic.get("adminUrl") or "",
+            progress=progress,
+        )),
+        ("ports", lambda: collect_oam_port_connections(
+            oam_target,
+            curated_config.get("ports") or [],
+            progress=progress,
+        )),
+        ("oauth", lambda: collect_oam_oauth_rest_metrics(
+            oam_target,
+            weblogic,
+            curated_config,
+            progress=progress,
+        )),
+        ("wlst", lambda: collect_oam_wlst_metrics(
+            oam_target,
+            oracle_home,
+            weblogic.get("adminUsername") or "weblogic",
+            weblogic.get("adminPassword") or "",
+            weblogic.get("adminUrl") or "",
+            progress=progress,
+        )),
+    ], max_workers=4)
+
+    oam_keystore_certificates, oam_keystore_error = task_result(
+        secondary_results,
+        "oam_keystore",
+        ([], "OAM keystore certificate collection task failed."),
     )
     if oam_keystore_certificates:
         certificates.extend(oam_keystore_certificates)
     if oam_keystore_error:
         certificate_error = "; ".join([item for item in (certificate_error, oam_keystore_error) if item])
-    config["portConnections"] = collect_oam_port_connections(
-        oam_target,
-        curated_config.get("ports") or [],
-        progress=progress,
-    )
-    config["oauth"] = collect_oam_oauth_rest_metrics(
-        oam_target,
-        weblogic,
-        curated_config,
-        progress=progress,
-    )
-    wlst_summary = collect_oam_wlst_metrics(
-        oam_target,
-        oracle_home,
-        weblogic.get("adminUsername") or "weblogic",
-        weblogic.get("adminPassword") or "",
-        weblogic.get("adminUrl") or "",
-        progress=progress,
-    )
+    config["portConnections"] = task_result(secondary_results, "ports", [])
+    config["oauth"] = task_result(secondary_results, "oauth", {"rows": [], "clients": [], "error": "OAM OAuth REST task failed."})
+    wlst_summary = task_result(secondary_results, "wlst", {"sections": [], "rows": [], "error": "OAM WLST task failed."})
     if wlst_summary.get("rows"):
         config.setdefault("groups", {})
         config.setdefault("summary", {})
