@@ -4630,8 +4630,9 @@ tbody tr:last-child td {
 }
 
 .patch-category-box.is-security .patch-category-head {
-  border-bottom-color: #efc5b8;
-  background: linear-gradient(135deg, #fff1ec 0%, #fff8f4 100%);
+  border-bottom-color: #94260f;
+  background: linear-gradient(135deg, #9f210f 0%, #d9471f 58%, #ee702e 100%);
+  box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.18);
 }
 
 .patch-category-head h4 {
@@ -4644,6 +4645,16 @@ tbody tr:last-child td {
   margin: 0;
   color: var(--muted);
   font-size: 13px;
+}
+
+.patch-category-box.is-security .patch-category-head h4 {
+  color: #fff;
+  font-size: 18px;
+  letter-spacing: 0.01em;
+}
+
+.patch-category-box.is-security .patch-category-head p {
+  color: rgba(255, 255, 255, 0.9);
 }
 
 .patch-category-count,
@@ -4667,6 +4678,13 @@ tbody tr:last-child td {
 .patch-classification-badge.is-security {
   background: #b83a1f;
   color: #fff;
+}
+
+.patch-category-box.is-security .patch-category-count {
+  border: 1px solid rgba(255, 255, 255, 0.46);
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff;
+  box-shadow: 0 4px 12px rgba(76, 12, 3, 0.22);
 }
 
 .patch-classification-badge {

@@ -2421,18 +2421,27 @@ def build_fmw_patch_recommendation(opatch, environment, oracle_home):
         comparison_rows.append(row)
 
     missing = []
+    installed_categories = {
+        patch_category(patch.get("description"))
+        for patch in patches
+        if patch_category(patch.get("description"))
+    }
     for item in required:
         if item["patchId"] in matched_required or item["patchId"] in installed_ids:
             continue
         row = dict(item)
         row["components"] = [component for component in item.get("applicability") or [] if component in components]
         missing.append(row)
+        missing_category = patch_category(row.get("description"))
+        if missing_category and missing_category in installed_categories:
+            continue
         comparison_row = {
-            "patchId": "",
-            "description": "Not installed",
-            "appliedOn": "",
+            "patchId": row.get("patchId") or "",
+            "description": row.get("description") or "Recommended patch",
+            "appliedOn": "Not installed",
             "recommendation": recommendation_text(row),
             "recommendationStatus": "missing",
+            "isMissingRecommendation": True,
         }
         comparison_row.update(patch_presentation_classification(comparison_row["recommendation"]))
         comparison_rows.append(comparison_row)

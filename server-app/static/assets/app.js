@@ -1257,6 +1257,7 @@ if(/FMW\s+THIRDPARTY|THIRD[- ]PARTY\s+(?:LIBRARY|BUNDLE)|\bOPSS\s+BUNDLE\b/.test
 if(/\bCOHERENCE\b.*\bCUMULATIVE PATCH\b|\bFMW PLATFORM\s+BUNDLE\b/.test(text))return{group:"security",label:"Platform Update"};
 return{group:"product",label:"Product / Component"};
 }
+patchRecommendationLabel=function(item){const status=String((item||{}).recommendationStatus||"").toLowerCase();const text=String((item||{}).recommendation||"").trim();if(status==="latest")return text&&text!=="Latest"?text:"Latest";if(status==="missing")return(item||{}).isMissingRecommendation?"Install required":text?`Install: ${text}`:"Install recommended patch";if(status==="recommended")return text&&text!=="-"?`Update to: ${text}`:"Update recommended";return text||"-";};
 function opatchCategoryRowOrderV123(item){const status=String((item||{}).recommendationStatus||"none").toLowerCase();return{missing:0,recommended:1,latest:2,none:3}[status]??4;}
 function renderOpatchCategoryTableV123(rows){
 const ordered=coerceList(rows).slice().sort(function(left,right){return opatchCategoryRowOrderV123(left)-opatchCategoryRowOrderV123(right);});
