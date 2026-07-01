@@ -2331,6 +2331,25 @@ def recommendation_text(item):
     return "{0} - {1}".format(item.get("patchId") or "-", item.get("description") or "-")
 
 
+def patch_presentation_classification(value):
+    text = str(value or "").upper()
+    if re.search(r"\bSECURITY\b|\bCVE[- ]?\d+", text):
+        return {"patchGroup": "security", "patchGroupLabel": "Security Update"}
+    if re.search(r"\b(?:WLS|WEBLOGIC)\b.*\b(?:PSU|PATCH SET UPDATE)\b|\bPSU\b", text):
+        return {"patchGroup": "security", "patchGroupLabel": "WebLogic PSU"}
+    if re.search(r"\bSPU\b|SECURITY PATCH UPDATE", text):
+        return {"patchGroup": "security", "patchGroupLabel": "Security Patch Update"}
+    if re.search(r"\bCPU\b|CRITICAL PATCH UPDATE", text):
+        return {"patchGroup": "security", "patchGroupLabel": "Critical Patch Update"}
+    if re.search(r"\b(?:JDK|JRE|JAVA)\b.*\b(?:SECURITY|PATCH|UPDATE)\b", text):
+        return {"patchGroup": "security", "patchGroupLabel": "Java Security Update"}
+    if re.search(r"FMW\s+THIRDPARTY|THIRD[- ]PARTY\s+(?:LIBRARY|BUNDLE)|\bOPSS\s+BUNDLE\b", text):
+        return {"patchGroup": "security", "patchGroupLabel": "Security Platform Update"}
+    if re.search(r"\bCOHERENCE\b.*\bCUMULATIVE PATCH\b|\bFMW PLATFORM\s+BUNDLE\b", text):
+        return {"patchGroup": "security", "patchGroupLabel": "Platform Update"}
+    return {"patchGroup": "product", "patchGroupLabel": "Product / Component"}
+
+
 def build_fmw_patch_recommendation(opatch, environment, oracle_home):
     opatch = opatch or {}
     family = detect_fmw_patch_family(opatch, oracle_home)
@@ -2343,7 +2362,11 @@ def build_fmw_patch_recommendation(opatch, environment, oracle_home):
         }
     baseline = FMW_PATCH_BASELINES[family]
     components = environment_idm_components(environment) or ALL_IDM_COMPONENTS
-    patches = list(opatch.get("patches") or [])
+    patches = []
+    for item in opatch.get("patches") or []:
+        patch = dict(item)
+        patch.update(patch_presentation_classification(patch.get("description")))
+        patches.append(patch)
     installed_ids = set()
     for item in patches:
         installed_ids.update(patch_item_numbers(item))
@@ -2394,6 +2417,7 @@ def build_fmw_patch_recommendation(opatch, environment, oracle_home):
         row = dict(patch)
         row["recommendation"] = recommendation
         row["recommendationStatus"] = recommendation_status
+        row.update(patch_presentation_classification("{0} {1}".format(row.get("description") or "", recommendation)))
         comparison_rows.append(row)
 
     missing = []
@@ -2403,13 +2427,15 @@ def build_fmw_patch_recommendation(opatch, environment, oracle_home):
         row = dict(item)
         row["components"] = [component for component in item.get("applicability") or [] if component in components]
         missing.append(row)
-        comparison_rows.append({
+        comparison_row = {
             "patchId": "",
             "description": "Not installed",
             "appliedOn": "",
             "recommendation": recommendation_text(row),
             "recommendationStatus": "missing",
-        })
+        }
+        comparison_row.update(patch_presentation_classification(comparison_row["recommendation"]))
+        comparison_rows.append(comparison_row)
 
     status = "updates_recommended" if missing else "latest"
     message = (
