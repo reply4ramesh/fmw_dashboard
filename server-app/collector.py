@@ -3518,6 +3518,205 @@ def run_wlst_script(target, wlst_path, script_body, timeout=180):
     return command, run_target(target, command, timeout=timeout)
 
 
+def build_dms_wlst_script(admin_username, admin_password, deployment_connect_url):
+    return (
+        "import sys\n"
+        "connect('" + python_string_literal(admin_username) + "','" + python_string_literal(admin_password) + "','" + python_string_literal(deployment_connect_url) + "')\n"
+        "def clean_dms(value):\n"
+        "    if value is None:\n"
+        "        return ''\n"
+        "    return str(value).replace('|', '/').replace('\\n', ' ').replace('\\r', ' ')\n"
+        "def safe_dms_call(bean, method_name, default_value):\n"
+        "    try:\n"
+        "        if bean is None:\n"
+        "            return default_value\n"
+        "        value = getattr(bean, method_name)()\n"
+        "        return default_value if value is None else value\n"
+        "    except:\n"
+        "        return default_value\n"
+        "def dms_list(value):\n"
+        "    try:\n"
+        "        return list(value or [])\n"
+        "    except:\n"
+        "        return []\n"
+        "dms_servers = []\n"
+        "dms_found = False\n"
+        "try:\n"
+        "    domainConfig()\n"
+        "    deployments = []\n"
+        "    for getter in ['getAppDeployments', 'getInternalAppDeployments']:\n"
+        "        deployments.extend(dms_list(safe_dms_call(cmo, getter, [])))\n"
+        "    for deployment in deployments:\n"
+        "        app_name = clean_dms(safe_dms_call(deployment, 'getName', ''))\n"
+        "        source_path = clean_dms(safe_dms_call(deployment, 'getSourcePath', ''))\n"
+        "        if app_name.lower() != 'dms' and not source_path.lower().endswith('/dms.war'):\n"
+        "            continue\n"
+        "        dms_found = True\n"
+        "        for target in dms_list(safe_dms_call(deployment, 'getTargets', [])):\n"
+        "            target_name = clean_dms(safe_dms_call(target, 'getName', ''))\n"
+        "            target_servers = dms_list(safe_dms_call(target, 'getServers', []))\n"
+        "            if target_servers:\n"
+        "                for server in target_servers:\n"
+        "                    server_name = clean_dms(safe_dms_call(server, 'getName', ''))\n"
+        "                    if server_name and server_name not in dms_servers:\n"
+        "                        dms_servers.append(server_name)\n"
+        "                    print('IAM_DMS_TARGET|' + app_name + '|' + target_name + '|' + server_name)\n"
+        "            else:\n"
+        "                if target_name and target_name not in dms_servers:\n"
+        "                    dms_servers.append(target_name)\n"
+        "                print('IAM_DMS_TARGET|' + app_name + '|' + target_name + '|' + target_name)\n"
+        "except:\n"
+        "    print('IAM_DMS_ERROR|Deployment discovery failed: ' + clean_dms(sys.exc_info()[1]))\n"
+        "if not dms_found:\n"
+        "    print('IAM_DMS_ERROR|The dms application was not found in WebLogic domain configuration.')\n"
+        "elif not dms_servers:\n"
+        "    print('IAM_DMS_ERROR|The dms deployment has no server or cluster targets.')\n"
+        "else:\n"
+        "    try:\n"
+        "        table_names = dms_list(displayMetricTableNames(servers=dms_servers))\n"
+        "        for table_name in table_names:\n"
+        "            print('IAM_DMS_TABLE|' + clean_dms(table_name))\n"
+        "        dms_xml = dumpMetrics(servers=dms_servers, format='xml')\n"
+        "        print('IAM_DMS_XML_BEGIN')\n"
+        "        print(clean_dms(dms_xml) if dms_xml is None else str(dms_xml))\n"
+        "        print('IAM_DMS_XML_END')\n"
+        "    except:\n"
+        "        print('IAM_DMS_ERROR|Metric collection failed: ' + clean_dms(sys.exc_info()[1]))\n"
+        "exit()\n"
+    )
+
+
+def dms_table_priority(name):
+    lowered = str(name or "").lower()
+    product_terms = ("oam", "oim", "oracle_security", "oracle.security", "accessmanager", "identity")
+    runtime_terms = ("jvm", "jdbc", "servlet", "webapp", "thread", "workmanager", "j2ee", "datasource")
+    if any(term in lowered for term in product_terms):
+        return 100
+    if any(term in lowered for term in runtime_terms):
+        return 50
+    return 0
+
+
+def parse_dms_wlst_output(text, max_tables=24, max_rows_per_table=10, max_metrics=600):
+    output = str(text or "")
+    deployments = []
+    errors = []
+    reported_tables = []
+    for raw_line in output.splitlines():
+        stripped = raw_line.strip()
+        if stripped.startswith("IAM_DMS_TARGET|"):
+            parts = stripped.split("|", 3)
+            if len(parts) == 4:
+                deployments.append({"application": parts[1], "target": parts[2], "server": parts[3]})
+        elif stripped.startswith("IAM_DMS_TABLE|"):
+            table_name = stripped.split("|", 1)[1].strip()
+            if table_name and table_name not in reported_tables:
+                reported_tables.append(table_name)
+        elif stripped.startswith("IAM_DMS_ERROR|"):
+            errors.append(stripped.split("|", 1)[1].strip())
+
+    result = {
+        "deployments": deployments,
+        "servers": sorted(set(item.get("server") for item in deployments if item.get("server"))),
+        "tableCount": len(reported_tables),
+        "tableInventory": [{"name": name} for name in reported_tables[:500]],
+        "tables": [],
+        "metrics": [],
+        "error": "; ".join(item for item in errors if item),
+    }
+    match = re.search(r"IAM_DMS_XML_BEGIN\s*(.*?)\s*IAM_DMS_XML_END", output, re.DOTALL)
+    if not match:
+        if deployments and not result["error"]:
+            result["error"] = "DMS returned no XML metric document."
+        return result
+
+    xml_text = re.sub(r"<\?xml[^>]*\?>", "", match.group(1)).strip()
+    xml_text = re.sub(r"<!DOCTYPE[^>]*>", "", xml_text).strip()
+    try:
+        root = ET.fromstring("<dmsMetrics>{0}</dmsMetrics>".format(xml_text))
+    except ET.ParseError as exc:
+        result["error"] = "; ".join(item for item in (result["error"], "Unable to parse DMS XML: {0}".format(exc)) if item)
+        return result
+
+    parsed_tables = []
+    for index, table in enumerate(root.findall(".//table")):
+        name = str(table.attrib.get("name") or "DMS Table").strip()
+        server = str(table.attrib.get("componentId") or "").strip()
+        rows = table.findall("./row")
+        parsed_tables.append({
+            "index": index,
+            "name": name,
+            "server": server,
+            "rowCount": len(rows),
+            "keys": str(table.attrib.get("keys") or "").split(),
+            "element": table,
+            "priority": dms_table_priority(name),
+        })
+
+    if not reported_tables:
+        unique_names = []
+        for table in parsed_tables:
+            if table["name"] not in unique_names:
+                unique_names.append(table["name"])
+        result["tableCount"] = len(unique_names)
+        result["tableInventory"] = [{"name": name} for name in unique_names[:500]]
+
+    selected = [item for item in parsed_tables if item["priority"] > 0]
+    selected.sort(key=lambda item: (-item["priority"], item["name"].lower(), item["index"]))
+    if not selected:
+        selected = parsed_tables[:max_tables]
+    selected = selected[:max_tables]
+
+    for table in selected:
+        result["tables"].append({
+            "name": table["name"],
+            "server": table["server"],
+            "rowCount": table["rowCount"],
+        })
+        identity_names = set(table["keys"])
+        for row_index, row in enumerate(table["element"].findall("./row")[:max_rows_per_table], start=1):
+            values = {}
+            types = {}
+            for column in row.findall("./column"):
+                column_name = str(column.attrib.get("name") or "").strip()
+                if not column_name:
+                    continue
+                values[column_name] = str(column.text or "").strip()
+                types[column_name] = str(column.attrib.get("type") or "").strip()
+            identity_values = [values.get(key) for key in table["keys"] if values.get(key)]
+            instance = " / ".join(identity_values[:4]) or "Row {0}".format(row_index)
+            for metric_name, metric_value in values.items():
+                if metric_name in identity_names or metric_value == "":
+                    continue
+                result["metrics"].append({
+                    "server": table["server"],
+                    "table": table["name"],
+                    "instance": instance,
+                    "metric": metric_name,
+                    "value": metric_value[:500],
+                    "type": types.get(metric_name) or "",
+                })
+                if len(result["metrics"]) >= max_metrics:
+                    return result
+    return result
+
+
+def collect_dms_metrics(target, wlst_path, admin_username, admin_password, deployment_connect_url, progress=None):
+    if callable(progress):
+        progress("Discovering DMS deployment targets from WebLogic domain config.xml and collecting DMS metrics through WLST.")
+    command, run_result = run_wlst_script(
+        target,
+        wlst_path,
+        build_dms_wlst_script(admin_username, admin_password, deployment_connect_url),
+        timeout=300,
+    )
+    parsed = parse_dms_wlst_output(run_result.get("output"))
+    parsed["command"] = "Use Oracle Common WLST DMS commands for config.xml-targeted servers."
+    if run_result.get("exit_code") != 0 and not parsed.get("error"):
+        parsed["error"] = str(run_result.get("output") or "DMS WLST collection failed.").strip()
+    return parsed
+
+
 def build_weblogic_runtime_script(admin_username, admin_password, deployment_connect_url):
     return (
         "from java.net import InetAddress\n"
@@ -3962,6 +4161,15 @@ def get_weblogic_metrics(target, environment, opatch_future=None, keystore_futur
         "socketRuntime": [],
         "workManagers": [],
     }
+    dms_metrics = {
+        "deployments": [],
+        "servers": [],
+        "tableCount": 0,
+        "tableInventory": [],
+        "tables": [],
+        "metrics": [],
+        "error": "DMS collection has not run.",
+    }
     configuration_error = None
     weblogic_ready = bool(oracle_home and admin_username and admin_password and deployment_connect_url)
 
@@ -4021,6 +4229,15 @@ def get_weblogic_metrics(target, environment, opatch_future=None, keystore_futur
                 progress("WLST extended runtime collection returned no parsed rows.")
         if combined_result.get("exit_code") != 0 and not (server_inventory or deployments or stuck_threads or jdbc_pools or runtime_row_count):
             configuration_error = combined_error
+
+        dms_metrics = collect_dms_metrics(
+            target,
+            wlst_path,
+            admin_username,
+            admin_password,
+            deployment_connect_url,
+            progress=progress,
+        )
 
     if False and weblogic_ready:
         wlst_path = "{0}/oracle_common/common/bin/wlst.sh".format(oracle_home.rstrip("/"))
@@ -4495,6 +4712,7 @@ def get_weblogic_metrics(target, environment, opatch_future=None, keystore_futur
         "jdbcHealth": jdbc_health,
         "socketRuntime": socket_runtime,
         "workManagers": work_managers,
+        "dms": dms_metrics,
         "criticalWidgets": critical_widgets,
         "opatch": opatch,
         "certificates": certificates,

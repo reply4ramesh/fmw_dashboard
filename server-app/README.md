@@ -139,6 +139,17 @@ sudo systemctl restart iam-monitoring
 - Use `Run Jobs Now` inside an environment to collect immediately.
 - Scheduled collection runs through `/etc/cron.d/iam-monitoring`.
 
+## DMS Metrics
+
+For WebLogic-backed products such as OAM and OIG, the collector uses the saved WebLogic administrator profile to:
+
+- discover the `dms` application and its server or cluster targets from the WebLogic domain configuration (`config.xml` through online WLST);
+- expand cluster targets to their individual AdminServer or managed-server names;
+- list the DMS metric tables available on only those targeted servers; and
+- collect a bounded, high-value set of OAM, OIG, JVM, JDBC, servlet, thread, WorkManager, and J2EE metrics for the dashboard snapshot.
+
+DMS values are shown under `OAM -> DMS Metrics` and `WebLogic -> DMS Metrics`. The WebLogic user must have Administrator-role access. Passwords remain in the existing encrypted environment profile and are not returned in dashboard payloads or collector command descriptions.
+
 ## Files
 
 - `app.py`: HTTP server and administration API

@@ -41,8 +41,9 @@ def deep_copy(value):
     return copy.deepcopy(value)
 
 
-def admin_local_url(admin_url, path, default_port=7001):
+def admin_endpoint_url(admin_url, path, default_port=7001, scheme_override="", port_override=None):
     scheme = "http"
+    host = "localhost"
     port = default_port
     text = str(admin_url or "").strip()
     if text:
@@ -50,20 +51,38 @@ def admin_local_url(admin_url, path, default_port=7001):
         try:
             parsed = urlparse(candidate)
             scheme = parsed.scheme or scheme
+            host = parsed.hostname or host
             port = parsed.port or (443 if scheme == "https" else default_port)
         except ValueError:
             pass
+    scheme = str(scheme_override or scheme).strip() or "http"
+    if port_override is not None:
+        port = port_override
     suffix = path if str(path or "").startswith("/") else "/{0}".format(path)
-    return "{0}://localhost:{1}{2}".format(scheme, port, suffix)
+    display_host = "[{0}]".format(host) if ":" in host and not host.startswith("[") else host
+    return "{0}://{1}:{2}{3}".format(scheme, display_host, port, suffix)
+
+
+def admin_local_url(admin_url, path, default_port=7001):
+    """Backward-compatible wrapper; endpoints now retain the configured admin host."""
+    return admin_endpoint_url(admin_url, path, default_port=default_port)
 
 
 def default_oam_checks(admin_url=""):
     checks = deep_copy(DEFAULT_OAM_CHECKS)
     for check in checks:
         if check.get("name") == "OAM Console":
-            check["url"] = admin_local_url(admin_url, "/oamconsole")
+            check["url"] = admin_endpoint_url(admin_url, "/oamconsole")
+        elif check.get("name") == "OAM Access":
+            check["url"] = admin_endpoint_url(
+                admin_url,
+                "/access",
+                default_port=14150,
+                scheme_override="http",
+                port_override=14150,
+            )
         elif check.get("name") == "Fusion Middleware EM":
-            check["url"] = admin_local_url(admin_url, "/em")
+            check["url"] = admin_endpoint_url(admin_url, "/em")
     return checks
 
 
@@ -228,7 +247,7 @@ def normalize_checks(checks, default_checks):
     return normalized
 
 
-def is_local_default_url(url, expected_path, ports):
+def is_local_default_url(url, expected_path, ports=None):
     text = str(url or "").strip()
     if not text:
         return False
@@ -240,7 +259,8 @@ def is_local_default_url(url, expected_path, ports):
         return False
     host = str(parsed.hostname or "").lower()
     path = str(parsed.path or "").rstrip("/") or "/"
-    return host in ("localhost", "127.0.0.1") and path == expected_path and port in ports
+    port_matches = ports is None or port in ports
+    return host in ("localhost", "127.0.0.1", "::1") and path == expected_path and port_matches
 
 
 def normalize_oam_checks(checks, admin_url=""):
@@ -253,10 +273,12 @@ def normalize_oam_checks(checks, admin_url=""):
         if str(item.get("product") or "").lower() != "oam":
             continue
         name = str(item.get("name") or "").strip().lower()
-        if name == "oam console" and is_local_default_url(item.get("url"), "/oamconsole", {7001}):
-            item["url"] = default_by_name.get(name, admin_local_url(admin_url, "/oamconsole"))
-        elif name == "fusion middleware em" and is_local_default_url(item.get("url"), "/em", {7001, 7201}):
-            item["url"] = default_by_name.get(name, admin_local_url(admin_url, "/em"))
+        if name == "oam console" and is_local_default_url(item.get("url"), "/oamconsole"):
+            item["url"] = default_by_name.get(name, admin_endpoint_url(admin_url, "/oamconsole"))
+        elif name == "oam access" and is_local_default_url(item.get("url"), "/access", {14150, 14151}):
+            item["url"] = default_by_name.get(name, admin_endpoint_url(admin_url, "/access", 14150, "http", 14150))
+        elif name == "fusion middleware em" and is_local_default_url(item.get("url"), "/em"):
+            item["url"] = default_by_name.get(name, admin_endpoint_url(admin_url, "/em"))
     return normalized
 
 
