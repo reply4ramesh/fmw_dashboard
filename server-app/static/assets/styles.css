@@ -5553,18 +5553,7 @@ tbody tr:last-child td {
     }
 }
 
-/* v127: keep the dashboard within laptop and tablet viewports. */
-html,
-body,
-.app-shell,
-.workspace-shell {
-    width: 100%;
-    max-width: 100%;
-    overflow-x: hidden;
-}
-
-.topbar-brand,
-.topbar-context,
+/* v128: fluid laptop layout without clipping header controls. */
 .workspace-main,
 .page-content,
 .content-stack,
@@ -5577,7 +5566,6 @@ body,
 .oam-launch-card,
 .operations-run-panel {
     min-width: 0;
-    max-width: 100%;
 }
 
 .definition-row dd,
@@ -5587,40 +5575,49 @@ body,
     overflow-wrap: anywhere;
 }
 
-@media (max-width: 1366px) {
+@media (max-width: 1600px) {
+    body {
+        font-size: 15px;
+    }
+
     .topbar {
         flex-wrap: wrap;
-        gap: 10px 16px;
-        padding: 10px 14px;
+        gap: 8px 16px;
+        padding: 12px 18px;
     }
 
     .topbar-brand {
-        flex: 0 1 auto;
+        width: 100%;
     }
 
     .topbar-context {
-        flex: 1 1 600px;
+        width: 100%;
+        justify-content: flex-start;
         gap: 10px;
         min-width: 0;
     }
 
     .topbar-context select {
         flex: 1 1 180px;
-        min-width: 160px;
-        max-width: 260px;
+        min-width: 220px;
+        max-width: 420px;
     }
 
     .workspace-shell {
-        grid-template-columns: 180px minmax(0, 1fr);
+        grid-template-columns: 210px minmax(0, 1fr);
     }
 
     .workspace-main {
-        padding: 12px;
+        padding: 14px;
+    }
+
+    .page-hero::after {
+        right: 0;
     }
 
     .summary-grid,
     .oam-launch-grid {
-        grid-template-columns: repeat(auto-fit, minmax(min(210px, 100%), 1fr));
+        grid-template-columns: repeat(3, minmax(0, 1fr));
     }
 
     .operations-run-panel .definition-list {
@@ -5629,22 +5626,14 @@ body,
 }
 
 @media (max-width: 1100px) {
-    .topbar-brand,
-    .topbar-context {
-        width: 100%;
-    }
-
-    .topbar-context {
-        justify-content: flex-start;
-    }
-
-    .topbar-update {
-        margin-right: 0;
-    }
-
     .oam-metrics-layout,
     .weblogic-metrics-layout {
         grid-template-columns: 1fr;
+    }
+
+    .summary-grid,
+    .oam-launch-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
     .operations-run-panel .definition-list {
@@ -5677,9 +5666,15 @@ body,
     .topbar-context select {
         width: 100%;
         max-width: none;
+        min-width: 0;
     }
 
     .page-hero-meta {
         min-width: 0;
+    }
+
+    .summary-grid,
+    .oam-launch-grid {
+        grid-template-columns: 1fr;
     }
 }

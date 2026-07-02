@@ -3557,7 +3557,7 @@ def build_dms_wlst_script(admin_username, admin_password, deployment_connect_url
     return (
         "import os\n"
         "import sys\n"
-        "import time\n"
+        "from java.lang import System\n"
         "connect('" + python_string_literal(admin_username) + "','" + python_string_literal(admin_password) + "','" + python_string_literal(deployment_connect_url) + "')\n"
         "def clean_dms(value):\n"
         "    if value is None:\n"
@@ -3615,7 +3615,7 @@ def build_dms_wlst_script(admin_username, admin_password, deployment_connect_url
         "        table_names = dms_list(displayMetricTableNames(servers=dms_servers))\n"
         "        for table_name in table_names:\n"
         "            print('IAM_DMS_TABLE|' + clean_dms(table_name))\n"
-        "        dms_output_file = '/tmp/iam-monitoring-dms-' + str(int(time.time() * 1000)) + '.xml'\n"
+        "        dms_output_file = '/tmp/iam-monitoring-dms-' + str(System.currentTimeMillis()) + '.xml'\n"
         "        if os.path.exists(dms_output_file):\n"
         "            os.remove(dms_output_file)\n"
         "        dumpMetrics(servers=dms_servers, format='xml', outputfile=dms_output_file)\n"

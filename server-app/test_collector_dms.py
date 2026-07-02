@@ -43,6 +43,8 @@ class DmsCollectorTests(unittest.TestCase):
         )
         self.assertIn("open(dms_output_file, 'r')", script)
         self.assertIn("os.remove(dms_output_file)", script)
+        self.assertIn("System.currentTimeMillis()", script)
+        self.assertNotIn("time.time()", script)
 
     def test_parses_deployment_targets_and_metric_values(self):
         result = parse_dms_wlst_output(SAMPLE_DMS_OUTPUT)
