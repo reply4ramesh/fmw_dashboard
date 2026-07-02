@@ -34,13 +34,15 @@ class DmsCollectorTests(unittest.TestCase):
 
         compile(script, "dms_wlst.py", "exec")
         self.assertIn("displayMetricTableNames(servers=dms_servers)", script)
-        self.assertIn("dumpMetrics(servers=dms_servers, format='xml')", script)
+        self.assertIn("dumpMetrics(servers=dms_servers, format='xml', outputfile=dms_output_file)", script)
         self.assertNotIn("return default_value if", script)
         self.assertNotIn("print(clean_dms(dms_xml) if", script)
         self.assertLess(
+            script.index("dumpMetrics(servers=dms_servers"),
             script.index("print('IAM_DMS_XML_BEGIN')"),
-            script.index("dms_xml = dumpMetrics"),
         )
+        self.assertIn("open(dms_output_file, 'r')", script)
+        self.assertIn("os.remove(dms_output_file)", script)
 
     def test_parses_deployment_targets_and_metric_values(self):
         result = parse_dms_wlst_output(SAMPLE_DMS_OUTPUT)

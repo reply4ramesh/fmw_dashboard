@@ -5552,3 +5552,134 @@ tbody tr:last-child td {
         grid-column: auto;
     }
 }
+
+/* v127: keep the dashboard within laptop and tablet viewports. */
+html,
+body,
+.app-shell,
+.workspace-shell {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: hidden;
+}
+
+.topbar-brand,
+.topbar-context,
+.workspace-main,
+.page-content,
+.content-stack,
+.content-grid,
+.panel,
+.summary-grid,
+.weblogic-metrics-layout,
+.weblogic-metric-results,
+.oam-launch-grid,
+.oam-launch-card,
+.operations-run-panel {
+    min-width: 0;
+    max-width: 100%;
+}
+
+.definition-row dd,
+.panel-copy,
+.tile-copy,
+.page-copy {
+    overflow-wrap: anywhere;
+}
+
+@media (max-width: 1366px) {
+    .topbar {
+        flex-wrap: wrap;
+        gap: 10px 16px;
+        padding: 10px 14px;
+    }
+
+    .topbar-brand {
+        flex: 0 1 auto;
+    }
+
+    .topbar-context {
+        flex: 1 1 600px;
+        gap: 10px;
+        min-width: 0;
+    }
+
+    .topbar-context select {
+        flex: 1 1 180px;
+        min-width: 160px;
+        max-width: 260px;
+    }
+
+    .workspace-shell {
+        grid-template-columns: 180px minmax(0, 1fr);
+    }
+
+    .workspace-main {
+        padding: 12px;
+    }
+
+    .summary-grid,
+    .oam-launch-grid {
+        grid-template-columns: repeat(auto-fit, minmax(min(210px, 100%), 1fr));
+    }
+
+    .operations-run-panel .definition-list {
+        gap: 0 14px;
+    }
+}
+
+@media (max-width: 1100px) {
+    .topbar-brand,
+    .topbar-context {
+        width: 100%;
+    }
+
+    .topbar-context {
+        justify-content: flex-start;
+    }
+
+    .topbar-update {
+        margin-right: 0;
+    }
+
+    .oam-metrics-layout,
+    .weblogic-metrics-layout {
+        grid-template-columns: 1fr;
+    }
+
+    .operations-run-panel .definition-list {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 900px) {
+    .workspace-shell {
+        grid-template-columns: 1fr;
+    }
+
+    .workspace-sidebar {
+        position: static;
+        min-height: auto;
+        max-height: none;
+        padding: 12px;
+        border-right: 0;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .topbar-context,
+    .topbar-update,
+    .panel-header,
+    .page-hero-body {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .topbar-context select {
+        width: 100%;
+        max-width: none;
+    }
+
+    .page-hero-meta {
+        min-width: 0;
+    }
+}
