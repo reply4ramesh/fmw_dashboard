@@ -3613,11 +3613,9 @@ def build_dms_wlst_script(admin_username, admin_password, deployment_connect_url
         "        table_names = dms_list(displayMetricTableNames(servers=dms_servers))\n"
         "        for table_name in table_names:\n"
         "            print('IAM_DMS_TABLE|' + clean_dms(table_name))\n"
-        "        dms_xml = dumpMetrics(servers=dms_servers, format='xml')\n"
         "        print('IAM_DMS_XML_BEGIN')\n"
-        "        if dms_xml is None:\n"
-        "            print('')\n"
-        "        else:\n"
+        "        dms_xml = dumpMetrics(servers=dms_servers, format='xml')\n"
+        "        if dms_xml is not None:\n"
         "            print(str(dms_xml))\n"
         "        print('IAM_DMS_XML_END')\n"
         "    except:\n"
@@ -3692,6 +3690,12 @@ def parse_dms_wlst_output(text, max_tables=24, max_rows_per_table=10, max_metric
             "element": table,
             "priority": dms_table_priority(name),
         })
+
+    if reported_tables and not parsed_tables:
+        result["error"] = "; ".join(item for item in (
+            result["error"],
+            "DMS reported metric table names but returned no XML table content.",
+        ) if item)
 
     if not reported_tables:
         unique_names = []

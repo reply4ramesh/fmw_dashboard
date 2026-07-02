@@ -37,6 +37,10 @@ class DmsCollectorTests(unittest.TestCase):
         self.assertIn("dumpMetrics(servers=dms_servers, format='xml')", script)
         self.assertNotIn("return default_value if", script)
         self.assertNotIn("print(clean_dms(dms_xml) if", script)
+        self.assertLess(
+            script.index("print('IAM_DMS_XML_BEGIN')"),
+            script.index("dms_xml = dumpMetrics"),
+        )
 
     def test_parses_deployment_targets_and_metric_values(self):
         result = parse_dms_wlst_output(SAMPLE_DMS_OUTPUT)
@@ -60,6 +64,15 @@ class DmsCollectorTests(unittest.TestCase):
         result = parse_dms_wlst_output("IAM_DMS_TARGET|dms|AdminServer|AdminServer")
 
         self.assertIn("no XML", result["error"])
+
+    def test_reports_names_without_xml_table_content(self):
+        result = parse_dms_wlst_output(
+            "IAM_DMS_TARGET|dms|AdminServer|AdminServer\n"
+            "IAM_DMS_TABLE|OAMS.OAM_Authn\n"
+            "IAM_DMS_XML_BEGIN\nIAM_DMS_XML_END"
+        )
+
+        self.assertIn("no XML table content", result["error"])
 
 
 if __name__ == "__main__":
