@@ -3578,6 +3578,15 @@ def build_dms_wlst_script(admin_username, admin_password, deployment_connect_url
         "        return list(value or [])\n"
         "    except:\n"
         "        return []\n"
+        "def dms_table_score(value):\n"
+        "    name = clean_dms(value).lower()\n"
+        "    for term in ['oams.', 'oam', 'oim', 'oracle_security', 'oracle.security', 'accessmanager', 'identity']:\n"
+        "        if term in name:\n"
+        "            return 100\n"
+        "    for term in ['jvm', 'jdbc', 'servlet', 'webapp', 'thread', 'workmanager', 'j2ee', 'datasource', 'coherence']:\n"
+        "        if term in name:\n"
+        "            return 50\n"
+        "    return 0\n"
         "dms_servers = []\n"
         "dms_found = False\n"
         "try:\n"
@@ -3615,11 +3624,20 @@ def build_dms_wlst_script(admin_username, admin_password, deployment_connect_url
         "        table_names = dms_list(displayMetricTableNames(servers=dms_servers))\n"
         "        for table_name in table_names:\n"
         "            print('IAM_DMS_TABLE|' + clean_dms(table_name))\n"
-        "        dms_output_file = '/tmp/iam-monitoring-dms-' + str(System.currentTimeMillis()) + '.xml'\n"
+        "        ranked_tables = []\n"
+        "        for table_name in table_names:\n"
+        "            table_score = dms_table_score(table_name)\n"
+        "            if table_score > 0:\n"
+        "                ranked_tables.append((-table_score, clean_dms(table_name).lower(), clean_dms(table_name)))\n"
+        "        ranked_tables.sort()\n"
+        "        selected_table_names = [item[2] for item in ranked_tables[:24]]\n"
+        "        if not selected_table_names:\n"
+        "            selected_table_names = [clean_dms(item) for item in table_names[:12]]\n"
+        "        dms_output_file = '/tmp/iam-monitoring-dms-' + str(System.currentTimeMillis()) + '.txt'\n"
         "        if os.path.exists(dms_output_file):\n"
         "            os.remove(dms_output_file)\n"
-        "        dumpMetrics(servers=dms_servers, format='xml', outputfile=dms_output_file)\n"
-        "        print('IAM_DMS_XML_BEGIN')\n"
+        "        apply(displayMetricTables, selected_table_names, {'servers': dms_servers, 'outputfile': dms_output_file})\n"
+        "        print('IAM_DMS_TEXT_BEGIN')\n"
         "        metric_file = open(dms_output_file, 'r')\n"
         "        try:\n"
         "            for metric_line in metric_file:\n"
@@ -3629,7 +3647,7 @@ def build_dms_wlst_script(admin_username, admin_password, deployment_connect_url
         "            if os.path.exists(dms_output_file):\n"
         "                os.remove(dms_output_file)\n"
         "        print('')\n"
-        "        print('IAM_DMS_XML_END')\n"
+        "        print('IAM_DMS_TEXT_END')\n"
         "    except:\n"
         "        print('IAM_DMS_ERROR|Metric collection failed: ' + clean_dms(sys.exc_info()[1]))\n"
         "exit()\n"
@@ -3645,6 +3663,74 @@ def dms_table_priority(name):
     if any(term in lowered for term in runtime_terms):
         return 50
     return 0
+
+
+def parse_dms_display_text(text, reported_tables, max_tables=24, max_rows_per_table=10, max_metrics=600):
+    table_names = set(str(item or "").strip() for item in reported_tables if str(item or "").strip())
+    selected_order = []
+    row_counts = {}
+    metrics = []
+    current_table = ""
+    current_values = {}
+
+    def flush_row():
+        if not current_table or not current_values:
+            current_values.clear()
+            return
+        row_count = row_counts.get(current_table, 0)
+        if row_count >= max_rows_per_table:
+            current_values.clear()
+            return
+        row_counts[current_table] = row_count + 1
+        identity_keys = ("Name", "Parent", "Host", "Process", "ServerName")
+        instance_values = [current_values.get(key) for key in identity_keys if current_values.get(key)]
+        instance = " / ".join(instance_values[:4]) or "Row {0}".format(row_count + 1)
+        server = current_values.get("ServerName") or current_values.get("Process") or ""
+        if ":" in server:
+            server = server.split(":", 1)[0]
+        for metric_name, metric_value in current_values.items():
+            if metric_name in identity_keys or metric_value == "":
+                continue
+            metrics.append({
+                "server": server,
+                "table": current_table,
+                "instance": instance,
+                "metric": metric_name,
+                "value": metric_value[:500],
+                "type": "",
+            })
+            if len(metrics) >= max_metrics:
+                break
+        current_values.clear()
+
+    lines = str(text or "").splitlines()
+    for index, raw_line in enumerate(lines):
+        stripped = raw_line.strip()
+        previous_is_rule = index > 0 and set(lines[index - 1].strip()) == set("-")
+        next_is_rule = index + 1 < len(lines) and set(lines[index + 1].strip()) == set("-")
+        if stripped in table_names and (previous_is_rule or next_is_rule):
+            flush_row()
+            current_table = stripped
+            if current_table not in selected_order and len(selected_order) < max_tables:
+                selected_order.append(current_table)
+            continue
+        if not stripped:
+            flush_row()
+            continue
+        if not current_table or stripped.startswith("-") or ":" not in stripped:
+            continue
+        key, value = stripped.split(":", 1)
+        key = key.strip()
+        value = value.strip()
+        if key:
+            current_values[key] = value
+    flush_row()
+    tables = [{
+        "name": name,
+        "server": "",
+        "rowCount": row_counts.get(name, 0),
+    } for name in selected_order]
+    return {"tables": tables, "metrics": metrics}
 
 
 def parse_dms_wlst_output(text, max_tables=24, max_rows_per_table=10, max_metrics=600):
@@ -3674,6 +3760,20 @@ def parse_dms_wlst_output(text, max_tables=24, max_rows_per_table=10, max_metric
         "metrics": [],
         "error": "; ".join(item for item in errors if item),
     }
+    text_match = re.search(r"IAM_DMS_TEXT_BEGIN\s*(.*?)\s*IAM_DMS_TEXT_END", output, re.DOTALL)
+    if text_match:
+        parsed_text = parse_dms_display_text(
+            text_match.group(1),
+            reported_tables,
+            max_tables=max_tables,
+            max_rows_per_table=max_rows_per_table,
+            max_metrics=max_metrics,
+        )
+        result["tables"] = parsed_text["tables"]
+        result["metrics"] = parsed_text["metrics"]
+        if not result["tables"] and not result["error"]:
+            result["error"] = "DMS returned no selected metric table content."
+        return result
     match = re.search(r"IAM_DMS_XML_BEGIN\s*(.*?)\s*IAM_DMS_XML_END", output, re.DOTALL)
     if not match:
         if deployments and not result["error"]:

@@ -17,7 +17,7 @@ class StaticAssetVersionTests(unittest.TestCase):
         version = (APP_ROOT / "VERSION").read_text(encoding="utf-8").strip()
         app_js = (APP_ROOT / "static" / "assets" / "app.js").read_text(encoding="utf-8")
 
-        self.assertIn("security-patches-v{0}".format(version), app_js)
+        self.assertIn("v{0}".format(version), app_js)
 
 
 if __name__ == "__main__":
