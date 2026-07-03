@@ -518,6 +518,14 @@ def default_environment(name=None, host=None):
                 "privateKeyPath": "",
                 "passphrase": "",
             },
+            "keystores": {
+                "identityPath": "",
+                "identityType": "JKS",
+                "identityPassword": "",
+                "trustPath": "",
+                "trustType": "JKS",
+                "trustPassword": "",
+            },
             "cluster": {
                 "enabled": False,
                 "nodes": [],
@@ -903,6 +911,14 @@ def normalize_environment(payload, existing=None):
                 default_port=22,
                 default_mode="user_password",
             ),
+            "keystores": {
+                "identityPath": str((weblogic_payload.get("keystores") or {}).get("identityPath") or (existing_weblogic.get("keystores") or {}).get("identityPath") or "").strip(),
+                "identityType": str((weblogic_payload.get("keystores") or {}).get("identityType") or (existing_weblogic.get("keystores") or {}).get("identityType") or "JKS").strip() or "JKS",
+                "identityPassword": preserve_secret((weblogic_payload.get("keystores") or {}).get("identityPassword"), (existing_weblogic.get("keystores") or {}).get("identityPassword")),
+                "trustPath": str((weblogic_payload.get("keystores") or {}).get("trustPath") or (existing_weblogic.get("keystores") or {}).get("trustPath") or "").strip(),
+                "trustType": str((weblogic_payload.get("keystores") or {}).get("trustType") or (existing_weblogic.get("keystores") or {}).get("trustType") or "JKS").strip() or "JKS",
+                "trustPassword": preserve_secret((weblogic_payload.get("keystores") or {}).get("trustPassword"), (existing_weblogic.get("keystores") or {}).get("trustPassword")),
+            },
             "cluster": deep_copy(existing_weblogic.get("cluster") or base["weblogic"].get("cluster") or {}),
             "jstatPath": str(
                 weblogic_payload.get("jstatPath")
@@ -1297,11 +1313,8 @@ def normalize_environment(payload, existing=None):
         or products.get("oig")
         or products.get("soa")
     )
-    pure_weblogic = bool(products.get("weblogic")) and not any(
-        products.get(key) for key in ("oam", "oud", "oig", "oid", "oaa", "soa")
-    )
-    if not pure_weblogic:
-        environment["weblogic"]["cluster"]["enabled"] = False
+    # OAM, OIG and SOA are WebLogic-domain products and may span multiple hosts.
+    # Preserve their saved/discovered cluster configuration just like pure WebLogic profiles.
 
     if products.get("oig"):
         environment["oig"]["oracleHome"] = environment["weblogic"].get("oracleHome") or environment["oig"].get("oracleHome") or ""
@@ -1579,6 +1592,16 @@ def serialize_environment(environment, include_sensitive=False):
                 "enabled": bool(weblogic_cluster.get("enabled")),
                 "nodes": [serialize_weblogic_cluster_node(node) for node in weblogic_cluster_nodes],
                 "node2": serialize_weblogic_cluster_node(weblogic_cluster_nodes[0] if weblogic_cluster_nodes else weblogic_node2),
+            },
+            "keystores": {
+                "identityPath": (weblogic.get("keystores") or {}).get("identityPath") or "",
+                "identityType": (weblogic.get("keystores") or {}).get("identityType") or "JKS",
+                "identityPassword": (weblogic.get("keystores") or {}).get("identityPassword") if include_sensitive else "",
+                "hasIdentityPassword": bool((weblogic.get("keystores") or {}).get("identityPassword")),
+                "trustPath": (weblogic.get("keystores") or {}).get("trustPath") or "",
+                "trustType": (weblogic.get("keystores") or {}).get("trustType") or "JKS",
+                "trustPassword": (weblogic.get("keystores") or {}).get("trustPassword") if include_sensitive else "",
+                "hasTrustPassword": bool((weblogic.get("keystores") or {}).get("trustPassword")),
             },
             "jstatPath": weblogic.get("jstatPath") or "",
             "serverNames": deep_copy(weblogic.get("serverNames") or []),

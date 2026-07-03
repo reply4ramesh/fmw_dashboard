@@ -2669,14 +2669,50 @@ def parse_keytool_certificates(text, keystore_name, keystore_path, command):
     return rows
 
 
-def collect_keystore_certificates(target, oracle_home, domain_home, progress=None):
+def collect_keystore_certificates(target, oracle_home, domain_home, progress=None, keystore_config=None):
     oracle_home = str(oracle_home or "").strip()
     domain_home = str(domain_home or "").strip()
     if not oracle_home and not domain_home:
         return [], "ORACLE_HOME and WebLogic DOMAIN_HOME are not configured for keystore certificate collection."
 
+    keystore_config = keystore_config or {}
+    custom_stores = []
+    for label, path_key, type_key, password_key in (
+        ("CustomIdentity", "identityPath", "identityType", "identityPassword"),
+        ("CustomTrust", "trustPath", "trustType", "trustPassword"),
+    ):
+        path = str(keystore_config.get(path_key) or "").strip()
+        if path:
+            custom_stores.append((label, path, str(keystore_config.get(type_key) or "JKS").strip(), str(keystore_config.get(password_key) or "")))
     if callable(progress):
-        progress("Starting WebLogic keystore certificate collection for DemoTrust.jks and DemoIdentity.jks.")
+        progress("Starting WebLogic custom keystore certificate collection." if custom_stores else "Discovering custom keystores from WebLogic config.xml, with demo keystores as fallback.")
+
+    if custom_stores:
+        invocations = []
+        for label, path, store_type, password in custom_stores:
+            invocations.append(
+                "run_custom {0} {1} {2} {3}; ".format(
+                    shlex.quote(label), shlex.quote(path), shlex.quote(store_type), shlex.quote(password)
+                )
+            )
+        store_invocations = "".join(invocations)
+    else:
+        store_invocations = (
+            "config_file=\"$DOMAIN_HOME/config/config.xml\"; "
+            "identity_path=$(discover_config_value custom-identity-key-store-file-name); "
+            "trust_path=$(discover_config_value custom-trust-key-store-file-name); "
+            "identity_type=$(discover_config_value custom-identity-key-store-type); "
+            "trust_type=$(discover_config_value custom-trust-key-store-type); "
+            "if [ -n \"$identity_path\" ]; then case \"$identity_path\" in /*) ;; *) identity_path=\"$DOMAIN_HOME/$identity_path\";; esac; "
+            "run_custom CustomIdentity \"$identity_path\" \"${{identity_type:-JKS}}\" {identity_password}; "
+            "else run_store DemoIdentity.jks DemoIdentityPassPhrase DemoIdentityKeyStorePassPhrase; fi; "
+            "if [ -n \"$trust_path\" ]; then case \"$trust_path\" in /*) ;; *) trust_path=\"$DOMAIN_HOME/$trust_path\";; esac; "
+            "run_custom CustomTrust \"$trust_path\" \"${{trust_type:-JKS}}\" {trust_password}; "
+            "else run_store DemoTrust.jks DemoIdentityKeyStorePassPhrase DemoTrustKeyStorePassPhrase; fi"
+        ).format(
+            identity_password=shlex.quote(str(keystore_config.get("identityPassword") or "")),
+            trust_password=shlex.quote(str(keystore_config.get("trustPassword") or "")),
+        )
 
     command = (
         "ORACLE_HOME={oracle_home}; DOMAIN_HOME={domain_home}; export ORACLE_HOME DOMAIN_HOME; "
@@ -2700,6 +2736,8 @@ def collect_keystore_certificates(target, oracle_home, domain_home, progress=Non
         "}}; "
         "KEYTOOL=$(find_keytool); "
         "if [ -z \"$KEYTOOL\" ]; then echo 'KEYTOOL_ERROR=keytool executable not found'; exit 0; fi; "
+        "discover_config_value() {{ tag=\"$1\"; [ -f \"$DOMAIN_HOME/config/config.xml\" ] || return 0; "
+        "sed -n \"s:.*<$tag>\\([^<]*\\)</$tag>.*:\\1:p\" \"$DOMAIN_HOME/config/config.xml\" | head -n 1; }}; "
         "run_store() {{ name=\"$1\"; shift; path=$(find_keystore \"$name\" || true); "
         "if [ -z \"$path\" ]; then echo \"KEYSTORE_ERROR|$name|not found\"; return 0; fi; "
         "echo \"KEYSTORE_BEGIN|$name|$path\"; "
@@ -2712,11 +2750,16 @@ def collect_keystore_certificates(target, oracle_home, domain_home, progress=Non
         "cat \"$out\" 2>/dev/null || true; rm -f \"$out\"; "
         "echo \"KEYSTORE_END|$name|$rc\"; "
         "}}; "
-        "run_store DemoTrust.jks DemoIdentityKeyStorePassPhrase DemoTrustKeyStorePassPhrase; "
-        "run_store DemoIdentity.jks DemoIdentityPassPhrase DemoIdentityKeyStorePassPhrase"
+        "run_custom() {{ name=\"$1\"; path=\"$2\"; storetype=\"$3\"; pass=\"$4\"; "
+        "if [ ! -f \"$path\" ]; then echo \"KEYSTORE_ERROR|$name|not found: $path\"; return 0; fi; "
+        "echo \"KEYSTORE_BEGIN|$name|$path\"; out=\"/tmp/iam-monitoring-keytool-$$-$name.out\"; "
+        "\"$KEYTOOL\" -list -v -keystore \"$path\" -storetype \"$storetype\" -storepass \"$pass\" >\"$out\" 2>&1; rc=$?; "
+        "cat \"$out\" 2>/dev/null || true; rm -f \"$out\"; echo \"KEYSTORE_END|$name|$rc\"; }}; "
+        "{store_invocations}"
     ).format(
         oracle_home=shlex.quote(oracle_home),
         domain_home=shlex.quote(domain_home),
+        store_invocations=store_invocations,
     )
     result = run_target(target, command, timeout=75)
     output = str(result.get("output") or "")
@@ -3621,33 +3664,45 @@ def build_dms_wlst_script(admin_username, admin_password, deployment_connect_url
         "    print('IAM_DMS_ERROR|The dms deployment has no server or cluster targets.')\n"
         "else:\n"
         "    try:\n"
-        "        table_names = dms_list(displayMetricTableNames(servers=dms_servers))\n"
-        "        for table_name in table_names:\n"
-        "            print('IAM_DMS_TABLE|' + clean_dms(table_name))\n"
-        "        ranked_tables = []\n"
-        "        for table_name in table_names:\n"
-        "            table_score = dms_table_score(table_name)\n"
-        "            if table_score > 0:\n"
-        "                ranked_tables.append((-table_score, clean_dms(table_name).lower(), clean_dms(table_name)))\n"
-        "        ranked_tables.sort()\n"
-        "        selected_table_names = [item[2] for item in ranked_tables[:24]]\n"
-        "        if not selected_table_names:\n"
-        "            selected_table_names = [clean_dms(item) for item in table_names[:12]]\n"
-        "        dms_output_file = '/tmp/iam-monitoring-dms-' + str(System.currentTimeMillis()) + '.txt'\n"
-        "        if os.path.exists(dms_output_file):\n"
-        "            os.remove(dms_output_file)\n"
-        "        apply(displayMetricTables, selected_table_names, {'servers': dms_servers, 'outputfile': dms_output_file})\n"
-        "        print('IAM_DMS_TEXT_BEGIN')\n"
-        "        metric_file = open(dms_output_file, 'r')\n"
-        "        try:\n"
-        "            for metric_line in metric_file:\n"
-        "                sys.stdout.write(metric_line)\n"
-        "        finally:\n"
-        "            metric_file.close()\n"
-        "            if os.path.exists(dms_output_file):\n"
-        "                os.remove(dms_output_file)\n"
-        "        print('')\n"
-        "        print('IAM_DMS_TEXT_END')\n"
+        "        all_table_names = []\n"
+        "        for dms_server in dms_servers:\n"
+        "            try:\n"
+        "                table_names = dms_list(displayMetricTableNames(servers=dms_server))\n"
+        "                for table_name in table_names:\n"
+        "                    clean_name = clean_dms(table_name)\n"
+        "                    if clean_name not in all_table_names:\n"
+        "                        all_table_names.append(clean_name)\n"
+        "                        print('IAM_DMS_TABLE|' + clean_name)\n"
+        "                ranked_tables = []\n"
+        "                for table_name in table_names:\n"
+        "                    table_score = dms_table_score(table_name)\n"
+        "                    if table_score > 0:\n"
+        "                        ranked_tables.append((-table_score, clean_dms(table_name).lower(), clean_dms(table_name)))\n"
+        "                ranked_tables.sort()\n"
+        "                selected_table_names = [item[2] for item in ranked_tables[:24]]\n"
+        "                if not selected_table_names:\n"
+        "                    selected_table_names = [clean_dms(item) for item in table_names[:12]]\n"
+        "                dms_output_file = '/tmp/iam-monitoring-dms-' + clean_dms(dms_server).replace('/', '_') + '-' + str(System.currentTimeMillis()) + '.txt'\n"
+        "                if os.path.exists(dms_output_file):\n"
+        "                    os.remove(dms_output_file)\n"
+        "                apply(displayMetricTables, selected_table_names, {'servers': dms_server, 'outputfile': dms_output_file})\n"
+        "                output_size = 0\n"
+        "                if os.path.exists(dms_output_file):\n"
+        "                    output_size = os.path.getsize(dms_output_file)\n"
+        "                print('IAM_DMS_DIAG|' + clean_dms(dms_server) + '|' + str(len(table_names)) + '|' + str(len(selected_table_names)) + '|' + str(output_size))\n"
+        "                print('IAM_DMS_TEXT_BEGIN|' + clean_dms(dms_server))\n"
+        "                metric_file = open(dms_output_file, 'r')\n"
+        "                try:\n"
+        "                    for metric_line in metric_file:\n"
+        "                        sys.stdout.write(metric_line)\n"
+        "                finally:\n"
+        "                    metric_file.close()\n"
+        "                    if os.path.exists(dms_output_file):\n"
+        "                        os.remove(dms_output_file)\n"
+        "                print('')\n"
+        "                print('IAM_DMS_TEXT_END|' + clean_dms(dms_server))\n"
+        "            except:\n"
+        "                print('IAM_DMS_ERROR|Server ' + clean_dms(dms_server) + ': ' + clean_dms(sys.exc_info()[1]))\n"
         "    except:\n"
         "        print('IAM_DMS_ERROR|Metric collection failed: ' + clean_dms(sys.exc_info()[1]))\n"
         "exit()\n"
@@ -3665,7 +3720,7 @@ def dms_table_priority(name):
     return 0
 
 
-def parse_dms_display_text(text, reported_tables, max_tables=24, max_rows_per_table=10, max_metrics=600):
+def parse_dms_display_text(text, reported_tables, max_tables=24, max_rows_per_table=10, max_metrics=600, source_server=""):
     table_names = set(str(item or "").strip() for item in reported_tables if str(item or "").strip())
     selected_order = []
     row_counts = {}
@@ -3698,6 +3753,7 @@ def parse_dms_display_text(text, reported_tables, max_tables=24, max_rows_per_ta
                 "metric": metric_name,
                 "value": metric_value[:500],
                 "type": "",
+                "sourceServer": source_server or server,
             })
             if len(metrics) >= max_metrics:
                 break
@@ -3727,7 +3783,7 @@ def parse_dms_display_text(text, reported_tables, max_tables=24, max_rows_per_ta
     flush_row()
     tables = [{
         "name": name,
-        "server": "",
+        "server": source_server,
         "rowCount": row_counts.get(name, 0),
     } for name in selected_order]
     return {"tables": tables, "metrics": metrics}
@@ -3738,6 +3794,7 @@ def parse_dms_wlst_output(text, max_tables=24, max_rows_per_table=10, max_metric
     deployments = []
     errors = []
     reported_tables = []
+    diagnostics = []
     for raw_line in output.splitlines():
         stripped = raw_line.strip()
         if stripped.startswith("IAM_DMS_TARGET|"):
@@ -3750,6 +3807,10 @@ def parse_dms_wlst_output(text, max_tables=24, max_rows_per_table=10, max_metric
                 reported_tables.append(table_name)
         elif stripped.startswith("IAM_DMS_ERROR|"):
             errors.append(stripped.split("|", 1)[1].strip())
+        elif stripped.startswith("IAM_DMS_DIAG|"):
+            parts = stripped.split("|", 4)
+            if len(parts) == 5:
+                diagnostics.append({"server": parts[1], "availableTables": parts[2], "selectedTables": parts[3], "outputBytes": parts[4]})
 
     result = {
         "deployments": deployments,
@@ -3758,8 +3819,24 @@ def parse_dms_wlst_output(text, max_tables=24, max_rows_per_table=10, max_metric
         "tableInventory": [{"name": name} for name in reported_tables[:500]],
         "tables": [],
         "metrics": [],
+        "diagnostics": diagnostics,
         "error": "; ".join(item for item in errors if item),
     }
+    server_text_matches = list(re.finditer(r"IAM_DMS_TEXT_BEGIN\|([^\r\n]+)\s*(.*?)\s*IAM_DMS_TEXT_END\|[^\r\n]+", output, re.DOTALL))
+    if server_text_matches:
+        for text_match in server_text_matches:
+            source_server = text_match.group(1).strip()
+            parsed_text = parse_dms_display_text(
+                text_match.group(2), reported_tables, max_tables=max_tables,
+                max_rows_per_table=max_rows_per_table,
+                max_metrics=max(0, max_metrics - len(result["metrics"])),
+                source_server=source_server,
+            )
+            result["tables"].extend(parsed_text["tables"])
+            result["metrics"].extend(parsed_text["metrics"])
+        if not result["tables"] and not result["error"]:
+            result["error"] = "DMS returned no selected metric table content for any deployment server."
+        return result
     text_match = re.search(r"IAM_DMS_TEXT_BEGIN\s*(.*?)\s*IAM_DMS_TEXT_END", output, re.DOTALL)
     if text_match:
         parsed_text = parse_dms_display_text(
@@ -8872,6 +8949,7 @@ def get_product_metrics(target, environment, app_checks, progress=None):
                     resolved_oracle_home,
                     resolved_domain_home,
                     progress,
+                    weblogic.get("keystores") or {},
                 )
     try:
         weblogic_metrics = get_weblogic_metrics(

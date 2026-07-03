@@ -16,6 +16,7 @@ from collector import (
 )
 from environment_registry import (
     get_environment,
+    get_global_defaults,
     list_environments,
     save_environment,
 )
@@ -61,6 +62,11 @@ def _snapshot_dir(db_path):
     return os.path.join(_state_root(db_path), "snapshots")
 
 
+def _history_dir(db_path, environment_id=None):
+    root = os.path.join(_state_root(db_path), "history")
+    return os.path.join(root, _slugify(environment_id)) if environment_id else root
+
+
 def _job_state_dir(db_path):
     return os.path.join(_state_root(db_path), "job_state")
 
@@ -87,6 +93,7 @@ def ensure_runtime_layout(db_path):
     for path in (
         _runtime_env_dir(db_path),
         _snapshot_dir(db_path),
+        _history_dir(db_path),
         _job_state_dir(db_path),
         _scheduler_state_dir(db_path),
         _bootstrap_key_dir(db_path),
@@ -240,7 +247,71 @@ def save_environment_snapshot(db_path, environment_id, payload):
         json.dump(payload, handle, indent=2, sort_keys=False)
         handle.write("\n")
     os.replace(temp_path, path)
+    archive_environment_snapshot(db_path, environment_id, payload)
     return path
+
+
+def archive_environment_snapshot(db_path, environment_id, payload):
+    """Keep an immutable, timestamped copy for audit and historical reports."""
+    directory = _history_dir(db_path, environment_id)
+    _ensure_dir(directory)
+    epoch = int((payload or {}).get("generatedAtEpoch") or time.time())
+    snapshot_id = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime(epoch))
+    path = os.path.join(directory, "{0}.json".format(snapshot_id))
+    suffix = 2
+    while os.path.exists(path):
+        path = os.path.join(directory, "{0}-{1}.json".format(snapshot_id, suffix))
+        suffix += 1
+    temp_path = "{0}.tmp".format(path)
+    with open(temp_path, "w", encoding="utf-8", newline="\n") as handle:
+        json.dump(payload, handle, indent=2, sort_keys=False)
+        handle.write("\n")
+    os.replace(temp_path, path)
+    defaults = get_global_defaults(db_path, include_secret=False).get("history") or {}
+    retention_days = max(1, int(defaults.get("retentionDays") or 90))
+    max_snapshots = max(1, int(defaults.get("maxSnapshots") or 500))
+    cutoff = time.time() - (retention_days * 86400)
+    files = sorted(
+        [os.path.join(directory, name) for name in os.listdir(directory) if name.endswith(".json")],
+        key=lambda item: os.path.getmtime(item),
+        reverse=True,
+    )
+    for index, old_path in enumerate(files):
+        try:
+            if index >= max_snapshots or os.path.getmtime(old_path) < cutoff:
+                os.remove(old_path)
+        except OSError:
+            pass
+    return path
+
+
+def list_environment_history(db_path, environment_id):
+    directory = _history_dir(db_path, environment_id)
+    if not os.path.isdir(directory):
+        return []
+    reports = []
+    for name in sorted(os.listdir(directory), reverse=True):
+        if not name.endswith(".json"):
+            continue
+        path = os.path.join(directory, name)
+        payload = _read_snapshot(path) or {}
+        reports.append({
+            "id": name[:-5],
+            "generatedAt": payload.get("generatedAt") or "",
+            "generatedAtEpoch": payload.get("generatedAtEpoch"),
+            "status": ((payload.get("summary") or {}).get("status") or payload.get("status") or "unknown"),
+            "trigger": ((payload.get("collection") or {}).get("trigger") or ""),
+            "durationMs": ((payload.get("collection") or {}).get("durationMs")),
+            "sizeBytes": os.path.getsize(path),
+        })
+    return reports
+
+
+def load_environment_history_snapshot(db_path, environment_id, report_id):
+    report_id = str(report_id or "")
+    if not re.match(r"^[A-Za-z0-9_-]+$", report_id):
+        return None
+    return _read_snapshot(os.path.join(_history_dir(db_path, environment_id), report_id + ".json"))
 
 
 def build_pending_dashboard(environment, message=None):

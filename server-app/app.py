@@ -43,9 +43,11 @@ from config_store import (
 from environment_registry import (
     delete_environment,
     get_environment,
+    get_global_defaults,
     list_environments,
     migrate_config_environments,
     save_environment,
+    save_global_defaults,
 )
 from job_runner import (
     bootstrap_environment_runtime,
@@ -56,6 +58,8 @@ from job_runner import (
     get_default_collection_minutes,
     launch_collection_job,
     load_environment_snapshot,
+    list_environment_history,
+    load_environment_history_snapshot,
     read_job_status,
 )
 from notification_store import (
@@ -1316,6 +1320,18 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/admin/environments":
             return self.handle_admin_environments()
 
+        if path == "/api/admin/defaults":
+            return self.send_json(200, get_global_defaults(DB_PATH, include_secret=False))
+
+        match = re.match(r"^/api/environments/([^/]+)/reports/([^/]+)$", path)
+        if match:
+            report = load_environment_history_snapshot(DB_PATH, match.group(1), match.group(2))
+            return self.send_json(200, report) if report else self.send_json(404, {"error": "Report not found."})
+
+        match = re.match(r"^/api/environments/([^/]+)/reports$", path)
+        if match:
+            return self.send_json(200, {"reports": list_environment_history(DB_PATH, match.group(1))})
+
         if path == "/api/admin/notifications":
             return self.handle_admin_notifications()
 
@@ -1407,6 +1423,11 @@ class Handler(BaseHTTPRequestHandler):
             return self.handle_save_notification_settings()
         if path == "/api/admin/help/proxy":
             return self.handle_save_update_proxy_settings()
+        if path == "/api/admin/defaults":
+            try:
+                return self.send_json(200, save_global_defaults(DB_PATH, parse_json_body(self)))
+            except Exception as exc:
+                return self.send_json(400, {"error": str(exc)})
         match = re.match(r"^/api/admin/environments/([^/]+)$", path)
         if match:
             return self.handle_update_environment(match.group(1))
@@ -1609,6 +1630,7 @@ class Handler(BaseHTTPRequestHandler):
                 "monitoringServer": config.get("monitoring_server") or {},
                 "operations": config.get("operations") or {},
                 "defaultCollectionMinutes": get_default_collection_minutes(),
+                "globalDefaults": get_global_defaults(DB_PATH, include_secret=False),
             }
             self.send_json(200, payload)
         except Exception as exc:

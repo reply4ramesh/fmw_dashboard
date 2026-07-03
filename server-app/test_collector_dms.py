@@ -61,11 +61,13 @@ class DmsCollectorTests(unittest.TestCase):
         script = build_dms_wlst_script("weblogic", "secret", "t3://admin.example:7001")
 
         compile(script, "dms_wlst.py", "exec")
-        self.assertIn("displayMetricTableNames(servers=dms_servers)", script)
+        self.assertIn("for dms_server in dms_servers", script)
+        self.assertIn("displayMetricTableNames(servers=dms_server)", script)
         self.assertIn("apply(displayMetricTables, selected_table_names", script)
         self.assertNotIn("return default_value if", script)
         self.assertNotIn("print(clean_dms(dms_xml) if", script)
-        self.assertIn("print('IAM_DMS_TEXT_BEGIN')", script)
+        self.assertIn("print('IAM_DMS_TEXT_BEGIN|' + clean_dms(dms_server))", script)
+        self.assertIn("IAM_DMS_DIAG", script)
         self.assertIn("open(dms_output_file, 'r')", script)
         self.assertIn("os.remove(dms_output_file)", script)
         self.assertIn("System.currentTimeMillis()", script)
@@ -84,6 +86,7 @@ class DmsCollectorTests(unittest.TestCase):
                 "metric": "authentication.completed",
                 "value": "42 ops",
                 "type": "",
+                "sourceServer": "oam_server1",
             },
             result["metrics"],
         )
