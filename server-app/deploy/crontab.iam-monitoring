@@ -1,1 +1,2 @@
 */5 * * * * __SERVICE_USER__ IAM_MONITORING_CONFIG=__CONFIG_FILE__ __INSTALL_DIR__/scheduler_jobs.sh >> __LOG_DIR__/scheduler.log 2>&1
+5 0 * * * __SERVICE_USER__ IAM_MONITORING_CONFIG=__CONFIG_FILE__ __INSTALL_DIR__/venv/bin/python __INSTALL_DIR__/auto_updater.py --config-file __CONFIG_FILE__ >> __LOG_DIR__/auto-update.log 2>&1

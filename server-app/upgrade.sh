@@ -153,6 +153,7 @@ validate_source_dir() {
   local source_dir="$1"
   for required_path in \
     app.py \
+    auto_updater.py \
     collect_environment.py \
     collector.py \
     config_store.py \
@@ -330,6 +331,7 @@ section "Staging updated application bundle"
 copy_bundle_contents "${SOURCE_DIR}" "${INSTALL_DIR}"
 chmod +x \
   "${INSTALL_DIR}/collect_environment.py" \
+  "${INSTALL_DIR}/auto_updater.py" \
   "${INSTALL_DIR}/install.sh" \
   "${INSTALL_DIR}/install_oracledash.sh" \
   "${INSTALL_DIR}/scheduler_jobs.sh" \
@@ -354,6 +356,7 @@ IAM_MONITORING_LOG_DIR=${LOG_DIR}
 IAM_MONITORING_SERVICE_USER=${SERVICE_USER}
 IAM_MONITORING_DEFAULT_COLLECTION_MINUTES=60
 IAM_MONITORING_SCHEDULER_MINUTES=5
+IAM_MONITORING_AUTO_UPDATE_ENABLED=true
 # Optional outbound proxy for GitHub update checks
 # IAM_MONITORING_HTTP_PROXY=http://proxy.example.com:80
 # IAM_MONITORING_HTTPS_PROXY=http://proxy.example.com:80
@@ -407,11 +410,13 @@ cp "${CRON_TMP}" "${CRON_FILE}"
 rm -f "${CRON_TMP}"
 chmod 644 "${CRON_FILE}"
 touch "${LOG_DIR}/scheduler.log"
-chown "${SERVICE_USER}:${SERVICE_USER}" "${LOG_DIR}/scheduler.log" || true
+touch "${LOG_DIR}/auto-update.log"
+chown "${SERVICE_USER}:${SERVICE_USER}" "${LOG_DIR}/scheduler.log" "${LOG_DIR}/auto-update.log" || true
 
 section "Validating application modules"
 "${INSTALL_DIR}/venv/bin/python" -m py_compile \
   "${INSTALL_DIR}/app.py" \
+  "${INSTALL_DIR}/auto_updater.py" \
   "${INSTALL_DIR}/collect_environment.py" \
   "${INSTALL_DIR}/collector.py" \
   "${INSTALL_DIR}/config_store.py" \
@@ -439,6 +444,7 @@ echo "${PRODUCT_NAME} is ready."
 echo "Installed service: ${SERVICE_NAME}"
 echo "Installed upgrade helper: ${UPGRADE_SERVICE_NAME}"
 echo "Cron service: ${CRON_SERVICE_NAME}"
+echo "Daily GitHub auto-update check: 12:05 AM server local time"
 echo "Health check: http://<server-ip>:${HEALTH_PORT}/healthz"
 echo "Useful checks:"
 echo "  sudo systemctl status ${SERVICE_NAME} --no-pager"
@@ -447,6 +453,7 @@ echo "  curl -I http://127.0.0.1:${HEALTH_PORT}/healthz"
 echo "  curl http://127.0.0.1:${HEALTH_PORT}/healthz"
 echo "  sudo journalctl -u ${SERVICE_NAME} -n 100 --no-pager"
 echo "  sudo tail -F ${LOG_DIR}/scheduler.log"
+echo "  sudo tail -F ${LOG_DIR}/auto-update.log"
 echo
 echo "If GitHub update checks need a proxy, add these to ${CONFIG_FILE} and restart ${SERVICE_NAME}:"
 echo "  IAM_MONITORING_HTTP_PROXY=http://proxy.example.com:80"

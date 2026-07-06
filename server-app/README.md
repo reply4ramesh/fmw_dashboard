@@ -60,6 +60,18 @@ sudo bash -lc 'export http_proxy=http://www-proxy-phx.oraclecorp.com:80; export 
 
 The upgrade keeps `/etc/iam-monitoring.env`, saved environments, runtime state, snapshots, and logs in place.
 
+### Daily Automatic Upgrade
+
+The installer adds a daily GitHub update check at `12:05 AM` in the server's local time zone. The check compares the installed `VERSION` with GitHub and queues the existing upgrade helper only when GitHub has a newer, safely comparable version. Manual checks and upgrades remain available in the UI.
+
+The automatic checker uses the proxy saved under `Administration -> Help -> GitHub Update Proxy`, with `/etc/iam-monitoring.env` as its fallback. Its output is written to `/var/log/iam-monitoring/auto-update.log`, while upgrade details remain in the existing GitHub upgrade log.
+
+To disable only the daily automatic check, add the following to `/etc/iam-monitoring.env`:
+
+```text
+IAM_MONITORING_AUTO_UPDATE_ENABLED=false
+```
+
 ## Uninstall
 
 Use these steps when you want to remove the dashboard from a Linux host.
@@ -98,6 +110,7 @@ sudo systemctl status iam-monitoring-upgrader --no-pager
 curl http://127.0.0.1:8081/healthz
 sudo journalctl -u iam-monitoring -n 100 --no-pager
 sudo tail -F /var/log/iam-monitoring/scheduler.log
+sudo tail -F /var/log/iam-monitoring/auto-update.log
 ```
 
 ## Runtime Layout
