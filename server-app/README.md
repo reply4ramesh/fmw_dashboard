@@ -120,6 +120,7 @@ sudo tail -F /var/log/iam-monitoring/auto-update.log
 - State directory: `/var/lib/iam-monitoring/state`
 - SQLite registry: `/var/lib/iam-monitoring/state/iam-monitoring.sqlite`
 - Snapshot directory: `/var/lib/iam-monitoring/state/snapshots`
+- Historical report directory: `/var/lib/iam-monitoring/state/history` by default
 - Runtime env directory: `/var/lib/iam-monitoring/state/runtime_env`
 - Log directory: `/var/log/iam-monitoring`
 - Service name: `iam-monitoring`
@@ -151,6 +152,30 @@ sudo systemctl restart iam-monitoring
 - After bootstrap, collection uses the installed runtime SSH key.
 - Use `Run Jobs Now` inside an environment to collect immediately.
 - Scheduled collection runs through `/etc/cron.d/iam-monitoring`.
+
+## Historical Reports
+
+Historical Reports preserve each collector result as a timestamped JSON file for troubleshooting, comparisons, audit evidence, OPatch review, DMS metrics, infrastructure, and application health. Report bodies are stored on disk rather than in SQLite.
+
+Open an environment and select `Reports -> Historical Reports`:
+
+- `View Report` opens a formatted, expandable, human-readable report.
+- `Print / Save PDF` creates a portable human-readable copy through the browser.
+- `Download JSON` saves the complete machine-readable collector payload.
+
+Configure report storage under `Administration -> Global Defaults -> Historical Report Storage`. Version 133 defaults to one retention day and at most 48 reports per environment. Files older than the retention window or beyond the count limit are removed during the next collection.
+
+Large reports can approach 2 MB each, so longer retention can consume significant disk space. Set `Custom Storage Directory` to an absolute path on a larger mounted filesystem when needed. The directory or its parent must be writable by the `iam-monitoring` service user. Changing the path does not move existing reports; copy the existing history first.
+
+Example preparation and archival commands:
+
+```bash
+sudo mkdir -p /mnt/fmw-history
+sudo chown -R iam-monitoring:iam-monitoring /mnt/fmw-history
+sudo rsync -a /var/lib/iam-monitoring/state/history/ /mnt/fmw-history/
+```
+
+The environment variable `IAM_MONITORING_HISTORY_DIR` can also set the storage root and takes precedence over the dashboard setting.
 
 ## DMS Metrics
 

@@ -159,12 +159,13 @@
                 <strong>FMW Monitoring Dashboard</strong>
             </div>
             <h1>User Guide</h1>
-            <p>Use this guide to create connection profiles, run collectors, review infrastructure and application metrics, analyze logs, and upgrade the dashboard.</p>
+            <p>Use this guide to create connection profiles, run collectors, review infrastructure and application metrics, analyze logs, preserve historical reports, and upgrade the dashboard.</p>
             <div class="quick-grid">
                 <div class="quick-card"><span>First Step</span><strong>Create an environment profile</strong></div>
                 <div class="quick-card"><span>Collector</span><strong>Run Jobs Now for fresh data</strong></div>
                 <div class="quick-card"><span>Best Signal</span><strong>OPatch analysis and WebLogic runtime</strong></div>
                 <div class="quick-card"><span>Logs</span><strong>Use Log Analyzer for complete log review</strong></div>
+                <div class="quick-card"><span>Reports</span><strong>Review, download, and archive point-in-time snapshots</strong></div>
             </div>
         </section>
 
@@ -238,6 +239,19 @@
                 </article>
                 <article class="step">
                     <span class="step-number">7</span>
+                    <h2>Use Historical Reports</h2>
+                    <p>Open an environment and select <strong>Reports → Historical Reports</strong>. Each collector run creates a read-only point-in-time report.</p>
+                    <ul>
+                        <li>Use <strong>View Report</strong> for a formatted, expandable report suitable for troubleshooting and printing to PDF.</li>
+                        <li>Use <strong>Download JSON</strong> when another tool needs the complete collector payload.</li>
+                        <li>Configure retention under <strong>Administration → Global Defaults → Historical Report Storage</strong>.</li>
+                        <li>The recommended limits are one day and 48 reports per environment. Large snapshots can approach 2 MB each.</li>
+                        <li>For longer retention, configure an absolute path on a filesystem with enough space and make it writable by the <code>iam-monitoring</code> service user.</li>
+                    </ul>
+                    <div class="callout">Reports are files, not SQLite rows. Changing the storage directory does not move existing reports; copy them to the new location before changing the setting.</div>
+                </article>
+                <article class="step">
+                    <span class="step-number">8</span>
                     <h2>Upgrade The Dashboard</h2>
                     <p>Open <strong>Support Center</strong> from Administration to check version, service paths, health endpoint, GitHub proxy, and upgrade controls.</p>
                     <ul>
@@ -247,7 +261,7 @@
                     </ul>
                 </article>
                 <article class="step">
-                    <span class="step-number">8</span>
+                    <span class="step-number">9</span>
                     <h2>Get Help</h2>
                     <p>Use the Help / Feedback page when you need assistance with access, collection, metrics, logs, or upgrade issues.</p>
                     <ul>

@@ -304,6 +304,8 @@ IAM_MONITORING_SERVICE_USER=${SERVICE_USER}
 IAM_MONITORING_DEFAULT_COLLECTION_MINUTES=${COLLECTOR_MINUTES}
 IAM_MONITORING_SCHEDULER_MINUTES=5
 IAM_MONITORING_AUTO_UPDATE_ENABLED=true
+# Optional external filesystem root for historical JSON reports
+# IAM_MONITORING_HISTORY_DIR=/mnt/fmw-history
 # Optional outbound proxy for GitHub update checks
 # IAM_MONITORING_HTTP_PROXY=http://proxy.example.com:80
 # IAM_MONITORING_HTTPS_PROXY=http://proxy.example.com:80

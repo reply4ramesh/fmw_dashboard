@@ -13,6 +13,10 @@ class StaticAssetVersionTests(unittest.TestCase):
         self.assertIn("/assets/app.js?v={0}".format(version), index)
         self.assertIn("/assets/styles.css?v={0}".format(version), index)
 
+        report = (APP_ROOT / "static" / "report.html").read_text(encoding="utf-8")
+        self.assertIn("/assets/report.js?v={0}".format(version), report)
+        self.assertIn("/assets/report.css?v={0}".format(version), report)
+
     def test_ui_state_version_tracks_release(self):
         version = (APP_ROOT / "VERSION").read_text(encoding="utf-8").strip()
         app_js = (APP_ROOT / "static" / "assets" / "app.js").read_text(encoding="utf-8")

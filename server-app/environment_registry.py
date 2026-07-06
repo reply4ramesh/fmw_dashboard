@@ -98,7 +98,7 @@ def default_global_defaults():
             "identityPath": "", "identityType": "JKS", "identityPassword": "",
             "trustPath": "", "trustType": "JKS", "trustPassword": "",
         },
-        "history": {"retentionDays": 90, "maxSnapshots": 500},
+        "history": {"retentionDays": 1, "maxSnapshots": 48, "storageDirectory": ""},
     }
 
 
@@ -111,6 +111,18 @@ def get_global_defaults(db_path, include_secret=False):
         for section in defaults:
             if isinstance(defaults[section], dict):
                 defaults[section].update(saved.get(section) or {})
+        saved_history = saved.get("history") or {}
+        try:
+            legacy_retention_days = int(saved_history.get("retentionDays") or 90)
+            legacy_max_snapshots = int(saved_history.get("maxSnapshots") or 500)
+        except (TypeError, ValueError):
+            legacy_retention_days = legacy_max_snapshots = None
+        if (
+            "storageDirectory" not in saved_history
+            and legacy_retention_days == 90
+            and legacy_max_snapshots == 500
+        ):
+            defaults["history"].update({"retentionDays": 1, "maxSnapshots": 48, "storageDirectory": ""})
     if not include_secret:
         for section, keys in (("ssh", ("password", "passphrase")), ("weblogic", ("adminPassword",)), ("keystores", ("identityPassword", "trustPassword"))):
             for key in keys:
@@ -126,7 +138,7 @@ def save_global_defaults(db_path, payload):
     for section in normalized:
         incoming = payload.get(section) or {}
         for key, default_value in normalized[section].items():
-            value = incoming.get(key)
+            value = incoming.get(key, (current.get(section) or {}).get(key, default_value))
             if key.lower().endswith("password") or key == "passphrase":
                 value = value if value not in (None, "") else (current.get(section) or {}).get(key, "")
             if isinstance(default_value, int):
@@ -135,6 +147,13 @@ def save_global_defaults(db_path, payload):
                 except (TypeError, ValueError):
                     value = default_value
             normalized[section][key] = default_value if value is None else value
+    history = normalized.get("history") or {}
+    history["retentionDays"] = max(1, int(history.get("retentionDays") or 1))
+    history["maxSnapshots"] = max(1, int(history.get("maxSnapshots") or 48))
+    storage_directory = str(history.get("storageDirectory") or "").strip()
+    if storage_directory and not os.path.isabs(os.path.expanduser(storage_directory)):
+        raise ValueError("History storage directory must be an absolute path.")
+    history["storageDirectory"] = storage_directory
     with _connect(db_path) as conn:
         conn.execute(
             "INSERT OR REPLACE INTO global_settings(setting_key, payload_json, updated_at) VALUES ('connection_defaults', ?, ?)",

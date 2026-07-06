@@ -62,8 +62,25 @@ def _snapshot_dir(db_path):
     return os.path.join(_state_root(db_path), "snapshots")
 
 
+def history_storage_details(db_path):
+    default_directory = os.path.join(_state_root(db_path), "history")
+    history = get_global_defaults(db_path, include_secret=False).get("history") or {}
+    configured_directory = str(
+        os.environ.get("IAM_MONITORING_HISTORY_DIR") or history.get("storageDirectory") or ""
+    ).strip()
+    effective_directory = os.path.abspath(os.path.expanduser(configured_directory)) if configured_directory else default_directory
+    return {
+        "defaultDirectory": default_directory,
+        "configuredDirectory": configured_directory,
+        "effectiveDirectory": effective_directory,
+        "source": "environment" if os.environ.get("IAM_MONITORING_HISTORY_DIR") else ("global_defaults" if configured_directory else "default"),
+        "retentionDays": max(1, int(history.get("retentionDays") or 1)),
+        "maxSnapshots": max(1, int(history.get("maxSnapshots") or 48)),
+    }
+
+
 def _history_dir(db_path, environment_id=None):
-    root = os.path.join(_state_root(db_path), "history")
+    root = history_storage_details(db_path)["effectiveDirectory"]
     return os.path.join(root, _slugify(environment_id)) if environment_id else root
 
 
@@ -267,12 +284,16 @@ def archive_environment_snapshot(db_path, environment_id, payload):
         json.dump(payload, handle, indent=2, sort_keys=False)
         handle.write("\n")
     os.replace(temp_path, path)
-    defaults = get_global_defaults(db_path, include_secret=False).get("history") or {}
-    retention_days = max(1, int(defaults.get("retentionDays") or 90))
-    max_snapshots = max(1, int(defaults.get("maxSnapshots") or 500))
+    storage = history_storage_details(db_path)
+    retention_days = storage["retentionDays"]
+    max_snapshots = storage["maxSnapshots"]
     cutoff = time.time() - (retention_days * 86400)
     files = sorted(
-        [os.path.join(directory, name) for name in os.listdir(directory) if name.endswith(".json")],
+        [
+            os.path.join(directory, name)
+            for name in os.listdir(directory)
+            if name.endswith(".json") and name != ".report-index.json"
+        ],
         key=lambda item: os.path.getmtime(item),
         reverse=True,
     )
@@ -282,29 +303,61 @@ def archive_environment_snapshot(db_path, environment_id, payload):
                 os.remove(old_path)
         except OSError:
             pass
+    _write_history_index(db_path, environment_id)
     return path
+
+
+def _history_report_metadata(path, payload=None):
+    name = os.path.basename(path)
+    payload = payload if payload is not None else (_read_snapshot(path) or {})
+    return {
+        "id": name[:-5],
+        "generatedAt": payload.get("generatedAt") or "",
+        "generatedAtEpoch": payload.get("generatedAtEpoch"),
+        "status": ((payload.get("summary") or {}).get("status") or payload.get("status") or "unknown"),
+        "trigger": ((payload.get("collection") or {}).get("trigger") or ""),
+        "durationMs": ((payload.get("collection") or {}).get("durationMs")),
+        "sizeBytes": os.path.getsize(path),
+    }
+
+
+def _write_history_index(db_path, environment_id):
+    directory = _history_dir(db_path, environment_id)
+    if not os.path.isdir(directory):
+        return []
+    index_path = os.path.join(directory, ".report-index.json")
+    existing = _read_snapshot(index_path) or {}
+    cached = {str(item.get("id") or ""): item for item in existing.get("reports") or []}
+    reports = []
+    for name in sorted(os.listdir(directory), reverse=True):
+        if not name.endswith(".json") or name == ".report-index.json":
+            continue
+        path = os.path.join(directory, name)
+        report_id = name[:-5]
+        metadata = cached.get(report_id)
+        if not metadata or metadata.get("sizeBytes") != os.path.getsize(path):
+            metadata = _history_report_metadata(path)
+        reports.append(metadata)
+    temp_path = index_path + ".tmp"
+    with open(temp_path, "w", encoding="utf-8", newline="\n") as handle:
+        json.dump({"reports": reports}, handle, indent=2, sort_keys=False)
+        handle.write("\n")
+    os.replace(temp_path, index_path)
+    return reports
 
 
 def list_environment_history(db_path, environment_id):
     directory = _history_dir(db_path, environment_id)
     if not os.path.isdir(directory):
         return []
-    reports = []
-    for name in sorted(os.listdir(directory), reverse=True):
-        if not name.endswith(".json"):
-            continue
-        path = os.path.join(directory, name)
-        payload = _read_snapshot(path) or {}
-        reports.append({
-            "id": name[:-5],
-            "generatedAt": payload.get("generatedAt") or "",
-            "generatedAtEpoch": payload.get("generatedAtEpoch"),
-            "status": ((payload.get("summary") or {}).get("status") or payload.get("status") or "unknown"),
-            "trigger": ((payload.get("collection") or {}).get("trigger") or ""),
-            "durationMs": ((payload.get("collection") or {}).get("durationMs")),
-            "sizeBytes": os.path.getsize(path),
-        })
-    return reports
+    index_path = os.path.join(directory, ".report-index.json")
+    index = _read_snapshot(index_path) or {}
+    reports = index.get("reports")
+    if isinstance(reports, list):
+        report_files = {name[:-5] for name in os.listdir(directory) if name.endswith(".json") and name != ".report-index.json"}
+        if {str(item.get("id") or "") for item in reports} == report_files:
+            return reports
+    return _write_history_index(db_path, environment_id)
 
 
 def load_environment_history_snapshot(db_path, environment_id, report_id):

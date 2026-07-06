@@ -3965,6 +3965,34 @@ tbody tr:last-child td {
     }
 }
 
+/* Version 133: the dedicated report-storage panel replaces the legacy retention block. */
+[data-global-defaults-form] > .form-section:last-of-type {
+    display: none;
+}
+
+.report-storage-settings code,
+.reports-intro code {
+    padding: 2px 5px;
+    border-radius: 5px;
+    background: #f0ebe5;
+    color: #2d2824;
+    overflow-wrap: anywhere;
+}
+
+.reports-intro .summary-grid {
+    margin: 16px 0;
+}
+
+.reports-intro .alert-card {
+    margin-top: 14px;
+}
+
+.button-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+}
+
 /* Version 131: laptop-safe Log Analyzer and report layouts. */
 .logscope-console-layout,
 .logscope-reader-pane,

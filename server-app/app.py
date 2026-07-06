@@ -56,6 +56,7 @@ from job_runner import (
     collect_environment_now,
     environment_overview_from_snapshot,
     get_default_collection_minutes,
+    history_storage_details,
     launch_collection_job,
     load_environment_snapshot,
     list_environment_history,
@@ -159,6 +160,7 @@ def build_help_details():
         "stateDirectory": state_dir,
         "runtimeEnvDirectory": runtime_env_dir,
         "snapshotDirectory": snapshot_dir,
+        "historyStorage": history_storage_details(DB_PATH),
         "jobStateDirectory": job_state_dir,
         "logDirectory": LOG_DIR,
         "schedulerLogPath": os.path.join(LOG_DIR, "scheduler.log"),
@@ -1330,7 +1332,12 @@ class Handler(BaseHTTPRequestHandler):
 
         match = re.match(r"^/api/environments/([^/]+)/reports$", path)
         if match:
-            return self.send_json(200, {"reports": list_environment_history(DB_PATH, match.group(1))})
+            reports = list_environment_history(DB_PATH, match.group(1))
+            return self.send_json(200, {
+                "reports": reports,
+                "storage": history_storage_details(DB_PATH),
+                "totalBytes": sum(int(item.get("sizeBytes") or 0) for item in reports),
+            })
 
         if path == "/api/admin/notifications":
             return self.handle_admin_notifications()
@@ -1356,7 +1363,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/" or path == "":
             return self.handle_file(os.path.join(STATIC_ROOT, "index.html"))
 
-        if path in ("/manual.html", "/help-feedback.html"):
+        if path in ("/manual.html", "/help-feedback.html", "/report.html"):
             return self.handle_file(os.path.join(STATIC_ROOT, path.lstrip("/")))
 
         if path.startswith("/assets/"):

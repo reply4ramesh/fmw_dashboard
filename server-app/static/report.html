@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Historical Report - FMW Monitoring Dashboard</title>
+    <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg?v=4u">
+    <link rel="stylesheet" href="/assets/report.css?v=133">
+</head>
+<body>
+    <header class="report-topbar">
+        <div class="brand"><span>ORACLE</span><strong>FMW Historical Report</strong></div>
+        <div class="report-actions">
+            <a class="button secondary" href="/">Back to Dashboard</a>
+            <button class="button secondary" id="print-report" type="button">Print / Save PDF</button>
+            <button class="button" id="download-json" type="button" disabled>Download JSON</button>
+        </div>
+    </header>
+    <main class="report-page">
+        <section id="report-hero" class="report-hero">
+            <p class="eyebrow">Historical collector snapshot</p>
+            <h1>Loading report</h1>
+            <p>Preparing a readable view of the saved JSON snapshot.</p>
+        </section>
+        <section id="report-summary" class="summary-grid" aria-label="Report summary"></section>
+        <section id="report-message" class="message hidden"></section>
+        <section id="report-content" class="report-content"></section>
+    </main>
+    <script src="/assets/report.js?v=133"></script>
+</body>
+</html>
