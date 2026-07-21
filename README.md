@@ -15,7 +15,7 @@ sudo bash -lc 'cd /tmp && rm -rf fmw_dashboard-main fmw-dashboard-main.tar.gz &&
 ### Install With Proxy
 
 ```bash
-sudo bash -lc 'export http_proxy=http://www-proxy-phx.oraclecorp.com:80; export https_proxy=http://www-proxy-phx.oraclecorp.com:80; cd /tmp && rm -rf fmw_dashboard-main fmw-dashboard-main.tar.gz && curl -L https://github.com/reply4ramesh/fmw_dashboard/archive/refs/heads/main.tar.gz -o fmw-dashboard-main.tar.gz && tar -xzf fmw-dashboard-main.tar.gz && bash /tmp/fmw_dashboard-main/server-app/install.sh'
+sudo bash -lc 'export http_proxy=http://www-proxy-phx.rameshcorp.com:80; export https_proxy=http://www-proxy-phx.rameshcorp.com:80; cd /tmp && rm -rf fmw_dashboard-main fmw-dashboard-main.tar.gz && curl -L https://github.com/reply4ramesh/fmw_dashboard/archive/refs/heads/main.tar.gz -o fmw-dashboard-main.tar.gz && tar -xzf fmw-dashboard-main.tar.gz && bash /tmp/fmw_dashboard-main/server-app/install.sh'
 ```
 
 ### Prepared Reinstall Only
@@ -23,7 +23,7 @@ sudo bash -lc 'export http_proxy=http://www-proxy-phx.oraclecorp.com:80; export 
 Use this only when Python, SSH tools, `sshpass`, `tar`, `unzip`, and `cronie` are already installed and you want to avoid a slow `dnf`/`yum` repository refresh.
 
 ```bash
-sudo bash -lc 'export http_proxy=http://www-proxy-phx.oraclecorp.com:80; export https_proxy=http://www-proxy-phx.oraclecorp.com:80; cd /tmp && rm -rf fmw_dashboard-main fmw-dashboard-main.tar.gz && curl -L https://github.com/reply4ramesh/fmw_dashboard/archive/refs/heads/main.tar.gz -o fmw-dashboard-main.tar.gz && tar -xzf fmw-dashboard-main.tar.gz && bash /tmp/fmw_dashboard-main/server-app/install.sh --skip-os-packages'
+sudo bash -lc 'export http_proxy=http://www-proxy-phx.rameshcorp.com:80; export https_proxy=http://www-proxy-phx.rameshcorp.com:80; cd /tmp && rm -rf fmw_dashboard-main fmw-dashboard-main.tar.gz && curl -L https://github.com/reply4ramesh/fmw_dashboard/archive/refs/heads/main.tar.gz -o fmw-dashboard-main.tar.gz && tar -xzf fmw-dashboard-main.tar.gz && bash /tmp/fmw_dashboard-main/server-app/install.sh --skip-os-packages'
 ```
 
 ## Quick Upgrade
@@ -55,7 +55,7 @@ sudo bash -lc 'cd /tmp && rm -rf fmw_dashboard-main fmw-dashboard-main.tar.gz &&
 ### Upgrade Command With Proxy
 
 ```bash
-sudo bash -lc 'export http_proxy=http://www-proxy-phx.oraclecorp.com:80; export https_proxy=http://www-proxy-phx.oraclecorp.com:80; cd /tmp && rm -rf fmw_dashboard-main fmw-dashboard-main.tar.gz && curl -L https://github.com/reply4ramesh/fmw_dashboard/archive/refs/heads/main.tar.gz -o fmw-dashboard-main.tar.gz && tar -xzf fmw-dashboard-main.tar.gz && bash /tmp/fmw_dashboard-main/server-app/upgrade.sh'
+sudo bash -lc 'export http_proxy=http://www-proxy-phx.rameshcorp.com:80; export https_proxy=http://www-proxy-phx.rameshcorp.com:80; cd /tmp && rm -rf fmw_dashboard-main fmw-dashboard-main.tar.gz && curl -L https://github.com/reply4ramesh/fmw_dashboard/archive/refs/heads/main.tar.gz -o fmw-dashboard-main.tar.gz && tar -xzf fmw-dashboard-main.tar.gz && bash /tmp/fmw_dashboard-main/server-app/upgrade.sh'
 ```
 
 The upgrade keeps `/etc/iam-monitoring.env`, saved environments, runtime state, snapshots, and logs in place.
@@ -144,8 +144,8 @@ Administration -> Help -> GitHub Update Proxy
 You can also put service-level proxy settings in `/etc/iam-monitoring.env` and restart the service:
 
 ```bash
-IAM_MONITORING_HTTP_PROXY=http://www-proxy-phx.oraclecorp.com:80
-IAM_MONITORING_HTTPS_PROXY=http://www-proxy-phx.oraclecorp.com:80
+IAM_MONITORING_HTTP_PROXY=http://www-proxy-phx.rameshcorp.com:80
+IAM_MONITORING_HTTPS_PROXY=http://www-proxy-phx.rameshcorp.com:80
 IAM_MONITORING_NO_PROXY=127.0.0.1,localhost
 sudo systemctl restart iam-monitoring
 ```
