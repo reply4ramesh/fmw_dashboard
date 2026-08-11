@@ -2334,4 +2334,18 @@ renderReportsPageV131=function(){const response=state.historyReports||{};const r
 document.addEventListener("submit",async function(event){const form=event.target.closest("[data-history-storage-form]");if(!form)return;event.preventDefault();const f=form.elements;const payload={history:{retentionDays:parseInt(f.retentionDays.value,10)||1,maxSnapshots:parseInt(f.maxSnapshots.value,10)||48,storageDirectory:f.storageDirectory.value.trim()}};try{await fetchJson("/api/admin/defaults",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});setMessage("Historical report storage settings saved. New limits apply during the next collection.","success");await loadAllData(false);}catch(error){setMessage(error.message,"error");}},true);
 const renderUserGuideBodyBeforeV133=renderUserGuideBody;
 renderUserGuideBody=function(){return`${renderUserGuideBodyBeforeV133()}<div class="guide-layout"><section class="guide-section"><h4>Historical Reports</h4><p>Open Reports inside an environment to view readable point-in-time collector results, print or save a PDF, or download the complete JSON. Configure one-day retention, the 48-report limit, and an optional external storage directory under Administration / Global Defaults / Historical Report Storage. Large reports can approach 2 MB each, and changing the storage directory does not move existing files.</p></section></div>`;};
+// Version 134: keep OAA pod log commands scoped to OAA LogScope sources.
+function selectedLogScopeGroupIsOaaV134(selected){
+const group=(selected||{}).group||{};
+const text=`${group.productCode||""} ${group.product||""} ${group.name||""} ${group.id||""}`.toLowerCase();
+return /\boaa\b/.test(text)||text.indexOf("oracle advanced authentication")>=0;
+}
+const renderLogScopePageBeforeV134=renderLogScopePage;
+renderLogScopePage=function(){
+const html=renderLogScopePageBeforeV134();
+const logState=currentLogScopeState();
+const selected=findLogScopeSelection(coerceList(logState.profiles),logState.activeProfileId,logState.activeGroupId);
+if(!selected.group||selectedLogScopeGroupIsOaaV134(selected))return html;
+return String(html||"").replace(/<section class="panel"><div class="panel-header"><div><h3 class="panel-title">OAA Kubernetes Log Commands<\/h3>[\s\S]*?<\/section>(?=<\/div>$)/,"");
+};
 loadStoredState();render();loadAllData(false);

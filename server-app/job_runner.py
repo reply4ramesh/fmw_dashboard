@@ -310,13 +310,15 @@ def archive_environment_snapshot(db_path, environment_id, payload):
 def _history_report_metadata(path, payload=None):
     name = os.path.basename(path)
     payload = payload if payload is not None else (_read_snapshot(path) or {})
+    runtime = payload.get("runtime") or {}
+    collection = payload.get("collection") or {}
     return {
         "id": name[:-5],
         "generatedAt": payload.get("generatedAt") or "",
         "generatedAtEpoch": payload.get("generatedAtEpoch"),
         "status": ((payload.get("summary") or {}).get("status") or payload.get("status") or "unknown"),
-        "trigger": ((payload.get("collection") or {}).get("trigger") or ""),
-        "durationMs": ((payload.get("collection") or {}).get("durationMs")),
+        "trigger": runtime.get("trigger") or collection.get("trigger") or "",
+        "durationMs": runtime.get("durationMs") if runtime.get("durationMs") is not None else collection.get("durationMs"),
         "sizeBytes": os.path.getsize(path),
     }
 
@@ -349,6 +351,10 @@ def _write_history_index(db_path, environment_id):
 def list_environment_history(db_path, environment_id):
     directory = _history_dir(db_path, environment_id)
     if not os.path.isdir(directory):
+        snapshot = load_environment_snapshot(db_path, environment_id)
+        if snapshot:
+            archive_environment_snapshot(db_path, environment_id, snapshot)
+            return _write_history_index(db_path, environment_id)
         return []
     index_path = os.path.join(directory, ".report-index.json")
     index = _read_snapshot(index_path) or {}
@@ -356,8 +362,20 @@ def list_environment_history(db_path, environment_id):
     if isinstance(reports, list):
         report_files = {name[:-5] for name in os.listdir(directory) if name.endswith(".json") and name != ".report-index.json"}
         if {str(item.get("id") or "") for item in reports} == report_files:
+            if reports:
+                return reports
+            snapshot = load_environment_snapshot(db_path, environment_id)
+            if snapshot:
+                archive_environment_snapshot(db_path, environment_id, snapshot)
+                return _write_history_index(db_path, environment_id)
             return reports
-    return _write_history_index(db_path, environment_id)
+    reports = _write_history_index(db_path, environment_id)
+    if not reports:
+        snapshot = load_environment_snapshot(db_path, environment_id)
+        if snapshot:
+            archive_environment_snapshot(db_path, environment_id, snapshot)
+            return _write_history_index(db_path, environment_id)
+    return reports
 
 
 def load_environment_history_snapshot(db_path, environment_id, report_id):
