@@ -2062,8 +2062,8 @@ DEFAULT_FMW_PATCH_BASELINES = {
     "12c": {
         "family": "12c",
         "version": "12.2.1.4.0",
-        "latestRelease": "June 2026 12.2.1.4.260609 SPB",
-        "latestPatch": _patch_row("IDM STACK PATCH BUNDLE 12.2.1.4.260609", "39525460", ALL_IDM_COMPONENTS),
+        "latestRelease": "August 2026 12.2.1.4.2608 SPB",
+        "latestPatch": _patch_row("MERGE REQUEST ON TOP OF 12.2.1.4.0 FOR BUGS 39465265 39301239", "39726402", ALL_IDM_COMPONENTS),
         "patches": [
             _patch_row("MERGE REQUEST ON TOP OF 12.2.1.4.0 FOR BUGS 34065178 34113169", "36649916", ALL_IDM_COMPONENTS),
             _patch_row("OIM 12CPS3 UPGRADE STUCK AT SCHEMAREADINESSQUERIES QUERYINDEXNAMES", "32999272", ALL_IDM_COMPONENTS),
@@ -2100,8 +2100,8 @@ DEFAULT_FMW_PATCH_BASELINES = {
     "14c": {
         "family": "14c",
         "version": "14.1.2.1",
-        "latestRelease": "June 2026 14.1.2.1.260609 SPB",
-        "latestPatch": _patch_row("IDM STACK PATCH BUNDLE 14.1.2.1.260609", "39526335", ALL_IDM_COMPONENTS),
+        "latestRelease": "August 2026 14.1.2.1.2608 SPB",
+        "latestPatch": _patch_row("MERGE REQUEST ON TOP OF 14.1.2.0.0 FOR BUGS 39458344 39301239", "39726399", ALL_IDM_COMPONENTS),
         "patches": [
             _patch_row("MERGE REQUEST ON TOP OF 14.1.2.0.0 FOR BUGS 37571450 37359866", "37632501", ALL_IDM_COMPONENTS),
             _patch_row("Unable to Retrieve Request Details by REST Client With End User", "37512243", ["OIG"]),
@@ -2306,10 +2306,19 @@ def patch_version_tokens(description):
 
 
 def baseline_items_for_components(baseline, components):
-    relevant = [baseline["latestPatch"]]
+    relevant = []
+    seen = set()
+    latest_patch = baseline.get("latestPatch") or {}
+    if latest_patch:
+        relevant.append(latest_patch)
+        seen.add(str(latest_patch.get("patchId") or ""))
     for item in baseline.get("patches") or []:
+        patch_id = str(item.get("patchId") or "")
+        if patch_id in seen:
+            continue
         if set(item.get("applicability") or []) & set(components):
             relevant.append(item)
+            seen.add(patch_id)
     return relevant
 
 
@@ -2331,25 +2340,6 @@ def recommendation_text(item):
     return "{0} - {1}".format(item.get("patchId") or "-", item.get("description") or "-")
 
 
-def patch_presentation_classification(value):
-    text = str(value or "").upper()
-    if re.search(r"\bSECURITY\b|\bCVE[- ]?\d+", text):
-        return {"patchGroup": "security", "patchGroupLabel": "Security Update"}
-    if re.search(r"\b(?:WLS|WEBLOGIC)\b.*\b(?:PSU|PATCH SET UPDATE)\b|\bPSU\b", text):
-        return {"patchGroup": "security", "patchGroupLabel": "WebLogic PSU"}
-    if re.search(r"\bSPU\b|SECURITY PATCH UPDATE", text):
-        return {"patchGroup": "security", "patchGroupLabel": "Security Patch Update"}
-    if re.search(r"\bCPU\b|CRITICAL PATCH UPDATE", text):
-        return {"patchGroup": "security", "patchGroupLabel": "Critical Patch Update"}
-    if re.search(r"\b(?:JDK|JRE|JAVA)\b.*\b(?:SECURITY|PATCH|UPDATE)\b", text):
-        return {"patchGroup": "security", "patchGroupLabel": "Java Security Update"}
-    if re.search(r"FMW\s+THIRDPARTY|THIRD[- ]PARTY\s+(?:LIBRARY|BUNDLE)|\bOPSS\s+BUNDLE\b", text):
-        return {"patchGroup": "security", "patchGroupLabel": "Security Platform Update"}
-    if re.search(r"\bCOHERENCE\b.*\bCUMULATIVE PATCH\b|\bFMW PLATFORM\s+BUNDLE\b", text):
-        return {"patchGroup": "security", "patchGroupLabel": "Platform Update"}
-    return {"patchGroup": "product", "patchGroupLabel": "Product / Component"}
-
-
 def build_fmw_patch_recommendation(opatch, environment, oracle_home):
     opatch = opatch or {}
     family = detect_fmw_patch_family(opatch, oracle_home)
@@ -2362,11 +2352,7 @@ def build_fmw_patch_recommendation(opatch, environment, oracle_home):
         }
     baseline = FMW_PATCH_BASELINES[family]
     components = environment_idm_components(environment) or ALL_IDM_COMPONENTS
-    patches = []
-    for item in opatch.get("patches") or []:
-        patch = dict(item)
-        patch.update(patch_presentation_classification(patch.get("description")))
-        patches.append(patch)
+    patches = list(opatch.get("patches") or [])
     installed_ids = set()
     for item in patches:
         installed_ids.update(patch_item_numbers(item))
@@ -2417,34 +2403,22 @@ def build_fmw_patch_recommendation(opatch, environment, oracle_home):
         row = dict(patch)
         row["recommendation"] = recommendation
         row["recommendationStatus"] = recommendation_status
-        row.update(patch_presentation_classification("{0} {1}".format(row.get("description") or "", recommendation)))
         comparison_rows.append(row)
 
     missing = []
-    installed_categories = {
-        patch_category(patch.get("description"))
-        for patch in patches
-        if patch_category(patch.get("description"))
-    }
     for item in required:
         if item["patchId"] in matched_required or item["patchId"] in installed_ids:
             continue
         row = dict(item)
         row["components"] = [component for component in item.get("applicability") or [] if component in components]
         missing.append(row)
-        missing_category = patch_category(row.get("description"))
-        if missing_category and missing_category in installed_categories:
-            continue
-        comparison_row = {
-            "patchId": row.get("patchId") or "",
-            "description": row.get("description") or "Recommended patch",
-            "appliedOn": "Not installed",
+        comparison_rows.append({
+            "patchId": "",
+            "description": "Not installed",
+            "appliedOn": "",
             "recommendation": recommendation_text(row),
             "recommendationStatus": "missing",
-            "isMissingRecommendation": True,
-        }
-        comparison_row.update(patch_presentation_classification(comparison_row["recommendation"]))
-        comparison_rows.append(comparison_row)
+        })
 
     status = "updates_recommended" if missing else "latest"
     message = (
@@ -2669,50 +2643,14 @@ def parse_keytool_certificates(text, keystore_name, keystore_path, command):
     return rows
 
 
-def collect_keystore_certificates(target, oracle_home, domain_home, progress=None, keystore_config=None):
+def collect_keystore_certificates(target, oracle_home, domain_home, progress=None):
     oracle_home = str(oracle_home or "").strip()
     domain_home = str(domain_home or "").strip()
     if not oracle_home and not domain_home:
         return [], "ORACLE_HOME and WebLogic DOMAIN_HOME are not configured for keystore certificate collection."
 
-    keystore_config = keystore_config or {}
-    custom_stores = []
-    for label, path_key, type_key, password_key in (
-        ("CustomIdentity", "identityPath", "identityType", "identityPassword"),
-        ("CustomTrust", "trustPath", "trustType", "trustPassword"),
-    ):
-        path = str(keystore_config.get(path_key) or "").strip()
-        if path:
-            custom_stores.append((label, path, str(keystore_config.get(type_key) or "JKS").strip(), str(keystore_config.get(password_key) or "")))
     if callable(progress):
-        progress("Starting WebLogic custom keystore certificate collection." if custom_stores else "Discovering custom keystores from WebLogic config.xml, with demo keystores as fallback.")
-
-    if custom_stores:
-        invocations = []
-        for label, path, store_type, password in custom_stores:
-            invocations.append(
-                "run_custom {0} {1} {2} {3}; ".format(
-                    shlex.quote(label), shlex.quote(path), shlex.quote(store_type), shlex.quote(password)
-                )
-            )
-        store_invocations = "".join(invocations)
-    else:
-        store_invocations = (
-            "config_file=\"$DOMAIN_HOME/config/config.xml\"; "
-            "identity_path=$(discover_config_value custom-identity-key-store-file-name); "
-            "trust_path=$(discover_config_value custom-trust-key-store-file-name); "
-            "identity_type=$(discover_config_value custom-identity-key-store-type); "
-            "trust_type=$(discover_config_value custom-trust-key-store-type); "
-            "if [ -n \"$identity_path\" ]; then case \"$identity_path\" in /*) ;; *) identity_path=\"$DOMAIN_HOME/$identity_path\";; esac; "
-            "run_custom CustomIdentity \"$identity_path\" \"${{identity_type:-JKS}}\" {identity_password}; "
-            "else run_store DemoIdentity.jks DemoIdentityPassPhrase DemoIdentityKeyStorePassPhrase; fi; "
-            "if [ -n \"$trust_path\" ]; then case \"$trust_path\" in /*) ;; *) trust_path=\"$DOMAIN_HOME/$trust_path\";; esac; "
-            "run_custom CustomTrust \"$trust_path\" \"${{trust_type:-JKS}}\" {trust_password}; "
-            "else run_store DemoTrust.jks DemoIdentityKeyStorePassPhrase DemoTrustKeyStorePassPhrase; fi"
-        ).format(
-            identity_password=shlex.quote(str(keystore_config.get("identityPassword") or "")),
-            trust_password=shlex.quote(str(keystore_config.get("trustPassword") or "")),
-        )
+        progress("Starting WebLogic keystore certificate collection for DemoTrust.jks and DemoIdentity.jks.")
 
     command = (
         "ORACLE_HOME={oracle_home}; DOMAIN_HOME={domain_home}; export ORACLE_HOME DOMAIN_HOME; "
@@ -2736,8 +2674,6 @@ def collect_keystore_certificates(target, oracle_home, domain_home, progress=Non
         "}}; "
         "KEYTOOL=$(find_keytool); "
         "if [ -z \"$KEYTOOL\" ]; then echo 'KEYTOOL_ERROR=keytool executable not found'; exit 0; fi; "
-        "discover_config_value() {{ tag=\"$1\"; [ -f \"$DOMAIN_HOME/config/config.xml\" ] || return 0; "
-        "sed -n \"s:.*<$tag>\\([^<]*\\)</$tag>.*:\\1:p\" \"$DOMAIN_HOME/config/config.xml\" | head -n 1; }}; "
         "run_store() {{ name=\"$1\"; shift; path=$(find_keystore \"$name\" || true); "
         "if [ -z \"$path\" ]; then echo \"KEYSTORE_ERROR|$name|not found\"; return 0; fi; "
         "echo \"KEYSTORE_BEGIN|$name|$path\"; "
@@ -2750,16 +2686,11 @@ def collect_keystore_certificates(target, oracle_home, domain_home, progress=Non
         "cat \"$out\" 2>/dev/null || true; rm -f \"$out\"; "
         "echo \"KEYSTORE_END|$name|$rc\"; "
         "}}; "
-        "run_custom() {{ name=\"$1\"; path=\"$2\"; storetype=\"$3\"; pass=\"$4\"; "
-        "if [ ! -f \"$path\" ]; then echo \"KEYSTORE_ERROR|$name|not found: $path\"; return 0; fi; "
-        "echo \"KEYSTORE_BEGIN|$name|$path\"; out=\"/tmp/iam-monitoring-keytool-$$-$name.out\"; "
-        "\"$KEYTOOL\" -list -v -keystore \"$path\" -storetype \"$storetype\" -storepass \"$pass\" >\"$out\" 2>&1; rc=$?; "
-        "cat \"$out\" 2>/dev/null || true; rm -f \"$out\"; echo \"KEYSTORE_END|$name|$rc\"; }}; "
-        "{store_invocations}"
+        "run_store DemoTrust.jks DemoIdentityKeyStorePassPhrase DemoTrustKeyStorePassPhrase; "
+        "run_store DemoIdentity.jks DemoIdentityPassPhrase DemoIdentityKeyStorePassPhrase"
     ).format(
         oracle_home=shlex.quote(oracle_home),
         domain_home=shlex.quote(domain_home),
-        store_invocations=store_invocations,
     )
     result = run_target(target, command, timeout=75)
     output = str(result.get("output") or "")
@@ -3596,360 +3527,6 @@ def run_wlst_script(target, wlst_path, script_body, timeout=180):
     return command, run_target(target, command, timeout=timeout)
 
 
-def build_dms_wlst_script(admin_username, admin_password, deployment_connect_url):
-    return (
-        "import os\n"
-        "import sys\n"
-        "from java.lang import System\n"
-        "connect('" + python_string_literal(admin_username) + "','" + python_string_literal(admin_password) + "','" + python_string_literal(deployment_connect_url) + "')\n"
-        "def clean_dms(value):\n"
-        "    if value is None:\n"
-        "        return ''\n"
-        "    return str(value).replace('|', '/').replace('\\n', ' ').replace('\\r', ' ')\n"
-        "def safe_dms_call(bean, method_name, default_value):\n"
-        "    try:\n"
-        "        if bean is None:\n"
-        "            return default_value\n"
-        "        value = getattr(bean, method_name)()\n"
-        "        if value is None:\n"
-        "            return default_value\n"
-        "        return value\n"
-        "    except:\n"
-        "        return default_value\n"
-        "def dms_list(value):\n"
-        "    try:\n"
-        "        return list(value or [])\n"
-        "    except:\n"
-        "        return []\n"
-        "def dms_table_score(value):\n"
-        "    name = clean_dms(value).lower()\n"
-        "    for term in ['oams.', 'oam', 'oim', 'oracle_security', 'oracle.security', 'accessmanager', 'identity']:\n"
-        "        if term in name:\n"
-        "            return 100\n"
-        "    for term in ['jvm', 'jdbc', 'servlet', 'webapp', 'thread', 'workmanager', 'j2ee', 'datasource', 'coherence']:\n"
-        "        if term in name:\n"
-        "            return 50\n"
-        "    return 0\n"
-        "dms_servers = []\n"
-        "dms_found = False\n"
-        "try:\n"
-        "    domainConfig()\n"
-        "    deployments = []\n"
-        "    for getter in ['getAppDeployments', 'getInternalAppDeployments']:\n"
-        "        deployments.extend(dms_list(safe_dms_call(cmo, getter, [])))\n"
-        "    for deployment in deployments:\n"
-        "        app_name = clean_dms(safe_dms_call(deployment, 'getName', ''))\n"
-        "        source_path = clean_dms(safe_dms_call(deployment, 'getSourcePath', ''))\n"
-        "        if app_name.lower() != 'dms' and not source_path.lower().endswith('/dms.war'):\n"
-        "            continue\n"
-        "        dms_found = True\n"
-        "        for target in dms_list(safe_dms_call(deployment, 'getTargets', [])):\n"
-        "            target_name = clean_dms(safe_dms_call(target, 'getName', ''))\n"
-        "            target_servers = dms_list(safe_dms_call(target, 'getServers', []))\n"
-        "            if target_servers:\n"
-        "                for server in target_servers:\n"
-        "                    server_name = clean_dms(safe_dms_call(server, 'getName', ''))\n"
-        "                    if server_name and server_name not in dms_servers:\n"
-        "                        dms_servers.append(server_name)\n"
-        "                    print('IAM_DMS_TARGET|' + app_name + '|' + target_name + '|' + server_name)\n"
-        "            else:\n"
-        "                if target_name and target_name not in dms_servers:\n"
-        "                    dms_servers.append(target_name)\n"
-        "                print('IAM_DMS_TARGET|' + app_name + '|' + target_name + '|' + target_name)\n"
-        "except:\n"
-        "    print('IAM_DMS_ERROR|Deployment discovery failed: ' + clean_dms(sys.exc_info()[1]))\n"
-        "if not dms_found:\n"
-        "    print('IAM_DMS_ERROR|The dms application was not found in WebLogic domain configuration.')\n"
-        "elif not dms_servers:\n"
-        "    print('IAM_DMS_ERROR|The dms deployment has no server or cluster targets.')\n"
-        "else:\n"
-        "    try:\n"
-        "        all_table_names = []\n"
-        "        for dms_server in dms_servers:\n"
-        "            try:\n"
-        "                table_names = dms_list(displayMetricTableNames(servers=dms_server))\n"
-        "                for table_name in table_names:\n"
-        "                    clean_name = clean_dms(table_name)\n"
-        "                    if clean_name not in all_table_names:\n"
-        "                        all_table_names.append(clean_name)\n"
-        "                        print('IAM_DMS_TABLE|' + clean_name)\n"
-        "                ranked_tables = []\n"
-        "                for table_name in table_names:\n"
-        "                    table_score = dms_table_score(table_name)\n"
-        "                    if table_score > 0:\n"
-        "                        ranked_tables.append((-table_score, clean_dms(table_name).lower(), clean_dms(table_name)))\n"
-        "                ranked_tables.sort()\n"
-        "                selected_table_names = [item[2] for item in ranked_tables[:24]]\n"
-        "                if not selected_table_names:\n"
-        "                    selected_table_names = [clean_dms(item) for item in table_names[:12]]\n"
-        "                dms_output_file = '/tmp/iam-monitoring-dms-' + clean_dms(dms_server).replace('/', '_') + '-' + str(System.currentTimeMillis()) + '.txt'\n"
-        "                if os.path.exists(dms_output_file):\n"
-        "                    os.remove(dms_output_file)\n"
-        "                apply(displayMetricTables, selected_table_names, {'servers': dms_server, 'outputfile': dms_output_file})\n"
-        "                output_size = 0\n"
-        "                if os.path.exists(dms_output_file):\n"
-        "                    output_size = os.path.getsize(dms_output_file)\n"
-        "                print('IAM_DMS_DIAG|' + clean_dms(dms_server) + '|' + str(len(table_names)) + '|' + str(len(selected_table_names)) + '|' + str(output_size))\n"
-        "                print('IAM_DMS_TEXT_BEGIN|' + clean_dms(dms_server))\n"
-        "                metric_file = open(dms_output_file, 'r')\n"
-        "                try:\n"
-        "                    for metric_line in metric_file:\n"
-        "                        sys.stdout.write(metric_line)\n"
-        "                finally:\n"
-        "                    metric_file.close()\n"
-        "                    if os.path.exists(dms_output_file):\n"
-        "                        os.remove(dms_output_file)\n"
-        "                print('')\n"
-        "                print('IAM_DMS_TEXT_END|' + clean_dms(dms_server))\n"
-        "            except:\n"
-        "                print('IAM_DMS_ERROR|Server ' + clean_dms(dms_server) + ': ' + clean_dms(sys.exc_info()[1]))\n"
-        "    except:\n"
-        "        print('IAM_DMS_ERROR|Metric collection failed: ' + clean_dms(sys.exc_info()[1]))\n"
-        "exit()\n"
-    )
-
-
-def dms_table_priority(name):
-    lowered = str(name or "").lower()
-    product_terms = ("oam", "oim", "oracle_security", "oracle.security", "accessmanager", "identity")
-    runtime_terms = ("jvm", "jdbc", "servlet", "webapp", "thread", "workmanager", "j2ee", "datasource")
-    if any(term in lowered for term in product_terms):
-        return 100
-    if any(term in lowered for term in runtime_terms):
-        return 50
-    return 0
-
-
-def parse_dms_display_text(text, reported_tables, max_tables=24, max_rows_per_table=10, max_metrics=600, source_server=""):
-    table_names = set(str(item or "").strip() for item in reported_tables if str(item or "").strip())
-    selected_order = []
-    row_counts = {}
-    metrics = []
-    current_table = ""
-    current_values = {}
-
-    def flush_row():
-        if not current_table or not current_values:
-            current_values.clear()
-            return
-        row_count = row_counts.get(current_table, 0)
-        if row_count >= max_rows_per_table:
-            current_values.clear()
-            return
-        row_counts[current_table] = row_count + 1
-        identity_keys = ("Name", "Parent", "Host", "Process", "ServerName")
-        instance_values = [current_values.get(key) for key in identity_keys if current_values.get(key)]
-        instance = " / ".join(instance_values[:4]) or "Row {0}".format(row_count + 1)
-        server = current_values.get("ServerName") or current_values.get("Process") or ""
-        if ":" in server:
-            server = server.split(":", 1)[0]
-        for metric_name, metric_value in current_values.items():
-            if metric_name in identity_keys or metric_value == "":
-                continue
-            metrics.append({
-                "server": server,
-                "table": current_table,
-                "instance": instance,
-                "metric": metric_name,
-                "value": metric_value[:500],
-                "type": "",
-                "sourceServer": source_server or server,
-            })
-            if len(metrics) >= max_metrics:
-                break
-        current_values.clear()
-
-    lines = str(text or "").splitlines()
-    for index, raw_line in enumerate(lines):
-        stripped = raw_line.strip()
-        previous_is_rule = index > 0 and set(lines[index - 1].strip()) == set("-")
-        next_is_rule = index + 1 < len(lines) and set(lines[index + 1].strip()) == set("-")
-        if stripped in table_names and (previous_is_rule or next_is_rule):
-            flush_row()
-            current_table = stripped
-            if current_table not in selected_order and len(selected_order) < max_tables:
-                selected_order.append(current_table)
-            continue
-        if not stripped:
-            flush_row()
-            continue
-        if not current_table or stripped.startswith("-") or ":" not in stripped:
-            continue
-        key, value = stripped.split(":", 1)
-        key = key.strip()
-        value = value.strip()
-        if key:
-            current_values[key] = value
-    flush_row()
-    tables = [{
-        "name": name,
-        "server": source_server,
-        "rowCount": row_counts.get(name, 0),
-    } for name in selected_order]
-    return {"tables": tables, "metrics": metrics}
-
-
-def parse_dms_wlst_output(text, max_tables=24, max_rows_per_table=10, max_metrics=600):
-    output = str(text or "")
-    deployments = []
-    errors = []
-    reported_tables = []
-    diagnostics = []
-    for raw_line in output.splitlines():
-        stripped = raw_line.strip()
-        if stripped.startswith("IAM_DMS_TARGET|"):
-            parts = stripped.split("|", 3)
-            if len(parts) == 4:
-                deployments.append({"application": parts[1], "target": parts[2], "server": parts[3]})
-        elif stripped.startswith("IAM_DMS_TABLE|"):
-            table_name = stripped.split("|", 1)[1].strip()
-            if table_name and table_name not in reported_tables:
-                reported_tables.append(table_name)
-        elif stripped.startswith("IAM_DMS_ERROR|"):
-            errors.append(stripped.split("|", 1)[1].strip())
-        elif stripped.startswith("IAM_DMS_DIAG|"):
-            parts = stripped.split("|", 4)
-            if len(parts) == 5:
-                diagnostics.append({"server": parts[1], "availableTables": parts[2], "selectedTables": parts[3], "outputBytes": parts[4]})
-
-    result = {
-        "deployments": deployments,
-        "servers": sorted(set(item.get("server") for item in deployments if item.get("server"))),
-        "tableCount": len(reported_tables),
-        "tableInventory": [{"name": name} for name in reported_tables[:500]],
-        "tables": [],
-        "metrics": [],
-        "diagnostics": diagnostics,
-        "error": "; ".join(item for item in errors if item),
-    }
-    server_text_matches = list(re.finditer(r"IAM_DMS_TEXT_BEGIN\|([^\r\n]+)\s*(.*?)\s*IAM_DMS_TEXT_END\|[^\r\n]+", output, re.DOTALL))
-    if server_text_matches:
-        for text_match in server_text_matches:
-            source_server = text_match.group(1).strip()
-            parsed_text = parse_dms_display_text(
-                text_match.group(2), reported_tables, max_tables=max_tables,
-                max_rows_per_table=max_rows_per_table,
-                max_metrics=max(0, max_metrics - len(result["metrics"])),
-                source_server=source_server,
-            )
-            result["tables"].extend(parsed_text["tables"])
-            result["metrics"].extend(parsed_text["metrics"])
-        if not result["tables"] and not result["error"]:
-            result["error"] = "DMS returned no selected metric table content for any deployment server."
-        return result
-    text_match = re.search(r"IAM_DMS_TEXT_BEGIN\s*(.*?)\s*IAM_DMS_TEXT_END", output, re.DOTALL)
-    if text_match:
-        parsed_text = parse_dms_display_text(
-            text_match.group(1),
-            reported_tables,
-            max_tables=max_tables,
-            max_rows_per_table=max_rows_per_table,
-            max_metrics=max_metrics,
-        )
-        result["tables"] = parsed_text["tables"]
-        result["metrics"] = parsed_text["metrics"]
-        if not result["tables"] and not result["error"]:
-            result["error"] = "DMS returned no selected metric table content."
-        return result
-    match = re.search(r"IAM_DMS_XML_BEGIN\s*(.*?)\s*IAM_DMS_XML_END", output, re.DOTALL)
-    if not match:
-        if deployments and not result["error"]:
-            result["error"] = "DMS returned no XML metric document."
-        return result
-
-    xml_text = re.sub(r"<\?xml[^>]*\?>", "", match.group(1)).strip()
-    xml_text = re.sub(r"<!DOCTYPE[^>]*>", "", xml_text).strip()
-    try:
-        root = ET.fromstring("<dmsMetrics>{0}</dmsMetrics>".format(xml_text))
-    except ET.ParseError as exc:
-        result["error"] = "; ".join(item for item in (result["error"], "Unable to parse DMS XML: {0}".format(exc)) if item)
-        return result
-
-    parsed_tables = []
-    for index, table in enumerate(root.findall(".//table")):
-        name = str(table.attrib.get("name") or "DMS Table").strip()
-        server = str(table.attrib.get("componentId") or "").strip()
-        rows = table.findall("./row")
-        parsed_tables.append({
-            "index": index,
-            "name": name,
-            "server": server,
-            "rowCount": len(rows),
-            "keys": str(table.attrib.get("keys") or "").split(),
-            "element": table,
-            "priority": dms_table_priority(name),
-        })
-
-    if reported_tables and not parsed_tables:
-        result["error"] = "; ".join(item for item in (
-            result["error"],
-            "DMS reported metric table names but returned no XML table content.",
-        ) if item)
-
-    if not reported_tables:
-        unique_names = []
-        for table in parsed_tables:
-            if table["name"] not in unique_names:
-                unique_names.append(table["name"])
-        result["tableCount"] = len(unique_names)
-        result["tableInventory"] = [{"name": name} for name in unique_names[:500]]
-
-    selected = [item for item in parsed_tables if item["priority"] > 0]
-    selected.sort(key=lambda item: (-item["priority"], item["name"].lower(), item["index"]))
-    if not selected:
-        selected = parsed_tables[:max_tables]
-    selected = selected[:max_tables]
-
-    for table in selected:
-        result["tables"].append({
-            "name": table["name"],
-            "server": table["server"],
-            "rowCount": table["rowCount"],
-        })
-        identity_names = set(table["keys"])
-        for row_index, row in enumerate(table["element"].findall("./row")[:max_rows_per_table], start=1):
-            values = {}
-            types = {}
-            for column in row.findall("./column"):
-                column_name = str(column.attrib.get("name") or "").strip()
-                if not column_name:
-                    continue
-                values[column_name] = str(column.text or "").strip()
-                types[column_name] = str(column.attrib.get("type") or "").strip()
-            identity_values = [values.get(key) for key in table["keys"] if values.get(key)]
-            instance = " / ".join(identity_values[:4]) or "Row {0}".format(row_index)
-            for metric_name, metric_value in values.items():
-                if metric_name in identity_names or metric_value == "":
-                    continue
-                result["metrics"].append({
-                    "server": table["server"],
-                    "table": table["name"],
-                    "instance": instance,
-                    "metric": metric_name,
-                    "value": metric_value[:500],
-                    "type": types.get(metric_name) or "",
-                })
-                if len(result["metrics"]) >= max_metrics:
-                    return result
-    return result
-
-
-def collect_dms_metrics(target, wlst_path, admin_username, admin_password, deployment_connect_url, progress=None):
-    if callable(progress):
-        progress("Discovering DMS deployment targets from WebLogic domain config.xml and collecting DMS metrics through WLST.")
-    command, run_result = run_wlst_script(
-        target,
-        wlst_path,
-        build_dms_wlst_script(admin_username, admin_password, deployment_connect_url),
-        timeout=300,
-    )
-    parsed = parse_dms_wlst_output(run_result.get("output"))
-    parsed["command"] = "Use Oracle Common WLST DMS commands for config.xml-targeted servers."
-    if run_result.get("exit_code") != 0 and not parsed.get("error"):
-        parsed["error"] = str(run_result.get("output") or "DMS WLST collection failed.").strip()
-    return parsed
-
-
 def build_weblogic_runtime_script(admin_username, admin_password, deployment_connect_url):
     return (
         "from java.net import InetAddress\n"
@@ -4394,15 +3971,6 @@ def get_weblogic_metrics(target, environment, opatch_future=None, keystore_futur
         "socketRuntime": [],
         "workManagers": [],
     }
-    dms_metrics = {
-        "deployments": [],
-        "servers": [],
-        "tableCount": 0,
-        "tableInventory": [],
-        "tables": [],
-        "metrics": [],
-        "error": "DMS collection has not run.",
-    }
     configuration_error = None
     weblogic_ready = bool(oracle_home and admin_username and admin_password and deployment_connect_url)
 
@@ -4462,15 +4030,6 @@ def get_weblogic_metrics(target, environment, opatch_future=None, keystore_futur
                 progress("WLST extended runtime collection returned no parsed rows.")
         if combined_result.get("exit_code") != 0 and not (server_inventory or deployments or stuck_threads or jdbc_pools or runtime_row_count):
             configuration_error = combined_error
-
-        dms_metrics = collect_dms_metrics(
-            target,
-            wlst_path,
-            admin_username,
-            admin_password,
-            deployment_connect_url,
-            progress=progress,
-        )
 
     if False and weblogic_ready:
         wlst_path = "{0}/oracle_common/common/bin/wlst.sh".format(oracle_home.rstrip("/"))
@@ -4945,7 +4504,6 @@ def get_weblogic_metrics(target, environment, opatch_future=None, keystore_futur
         "jdbcHealth": jdbc_health,
         "socketRuntime": socket_runtime,
         "workManagers": work_managers,
-        "dms": dms_metrics,
         "criticalWidgets": critical_widgets,
         "opatch": opatch,
         "certificates": certificates,
@@ -8949,7 +8507,6 @@ def get_product_metrics(target, environment, app_checks, progress=None):
                     resolved_oracle_home,
                     resolved_domain_home,
                     progress,
-                    weblogic.get("keystores") or {},
                 )
     try:
         weblogic_metrics = get_weblogic_metrics(
