@@ -13,6 +13,7 @@ from job_runner import (
     collect_environment_now,
     run_due_collection_jobs,
 )
+from auto_update import maybe_run_daily_auto_update
 
 
 try:
@@ -94,6 +95,16 @@ def main():
     args = parser.parse_args()
 
     if args.scheduler:
+        update_result = maybe_run_daily_auto_update(args.db_path)
+        if update_result.get("checked"):
+            label = "queued" if update_result.get("queued") else "checked"
+            print("Automatic GitHub update {0}: running {1}, GitHub {2}.".format(
+                label,
+                update_result.get("currentVersion") or "-",
+                update_result.get("remoteVersion") or "-",
+            ), flush=True)
+        elif update_result.get("error"):
+            print("Automatic GitHub update error: {0}".format(update_result.get("error")), flush=True)
         launched = run_due_collection_jobs(args.db_path)
         print("Scheduler launched {0} collector job(s).".format(len(launched)), flush=True)
         for item in launched:

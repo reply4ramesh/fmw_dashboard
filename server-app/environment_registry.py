@@ -3,7 +3,7 @@ import os
 import sqlite3
 from datetime import datetime
 
-from config_store import normalize_environment, repair_bootstrap_server_profile, serialize_environment, slugify
+from config_store import coerce_bool, normalize_environment, repair_bootstrap_server_profile, serialize_environment, slugify
 
 
 def _now_utc_iso():
@@ -91,6 +91,10 @@ def _list_raw(db_path):
 
 
 def default_global_defaults():
+    try:
+        automatic_hour = int(os.environ.get("IAM_MONITORING_AUTO_UPDATE_HOUR", "2") or 2)
+    except (TypeError, ValueError):
+        automatic_hour = 2
     return {
         "ssh": {"username": "", "sshMode": "", "password": "", "privateKeyPath": "", "passphrase": "", "port": 22},
         "weblogic": {"oracleHome": "", "adminUsername": "", "adminPassword": ""},
@@ -99,6 +103,11 @@ def default_global_defaults():
             "trustPath": "", "trustType": "JKS", "trustPassword": "",
         },
         "history": {"retentionDays": 1, "maxSnapshots": 48, "storageDirectory": ""},
+        "updates": {
+            "automaticEnabled": coerce_bool(os.environ.get("IAM_MONITORING_AUTO_UPDATE_ENABLED"), False),
+            "automaticHour": max(0, min(23, automatic_hour)),
+            "lastAutomaticCheckDate": "",
+        },
     }
 
 
@@ -154,6 +163,14 @@ def save_global_defaults(db_path, payload):
     if storage_directory and not os.path.isabs(os.path.expanduser(storage_directory)):
         raise ValueError("History storage directory must be an absolute path.")
     history["storageDirectory"] = storage_directory
+    updates = normalized.get("updates") or {}
+    updates["automaticEnabled"] = coerce_bool(updates.get("automaticEnabled"), False)
+    try:
+        automatic_hour = int(updates.get("automaticHour") or 2)
+    except (TypeError, ValueError):
+        automatic_hour = 2
+    updates["automaticHour"] = max(0, min(23, automatic_hour))
+    updates["lastAutomaticCheckDate"] = str(updates.get("lastAutomaticCheckDate") or "").strip()
     with _connect(db_path) as conn:
         conn.execute(
             "INSERT OR REPLACE INTO global_settings(setting_key, payload_json, updated_at) VALUES ('connection_defaults', ?, ?)",

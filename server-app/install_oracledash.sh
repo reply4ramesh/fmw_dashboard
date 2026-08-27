@@ -14,6 +14,9 @@ DASHBOARD_PORT="8081"
 DASHBOARD_PORT_SET=0
 COLLECTOR_MINUTES="60"
 COLLECTOR_MINUTES_SET=0
+AUTO_UPDATE_ENABLED="0"
+AUTO_UPDATE_SET=0
+AUTO_UPDATE_HOUR="2"
 SKIP_OS_PACKAGES="${SKIP_OS_PACKAGES:-0}"
 PKG_MGR=""
 CRON_SERVICE_NAME="cron"
@@ -34,6 +37,8 @@ Options:
   --user iam-monitoring
   --port 8081
   --collector-minutes 60
+  --auto-update daily
+  --auto-update-hour 2
   --archive /tmp/iam-monitoring.tar.gz
   --skip-os-packages
 
@@ -53,6 +58,16 @@ while [[ $# -gt 0 ]]; do
     --user) SERVICE_USER="${2:-}"; shift 2 ;;
     --port) DASHBOARD_PORT="${2:-}"; DASHBOARD_PORT_SET=1; shift 2 ;;
     --collector-minutes) COLLECTOR_MINUTES="${2:-}"; COLLECTOR_MINUTES_SET=1; shift 2 ;;
+    --auto-update)
+      case "${2:-}" in
+        daily|yes|true|1|on) AUTO_UPDATE_ENABLED="1" ;;
+        disabled|no|false|0|off) AUTO_UPDATE_ENABLED="0" ;;
+        *) echo "Invalid auto-update value: ${2:-}. Use daily or disabled." >&2; exit 1 ;;
+      esac
+      AUTO_UPDATE_SET=1
+      shift 2
+      ;;
+    --auto-update-hour) AUTO_UPDATE_HOUR="${2:-}"; shift 2 ;;
     --archive) ARCHIVE="${2:-}"; shift 2 ;;
     --skip-os-packages) SKIP_OS_PACKAGES=1; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -104,6 +119,22 @@ prompt_for_collector_minutes() {
 
   if ! [[ "${COLLECTOR_MINUTES}" =~ ^[0-9]+$ ]] || (( COLLECTOR_MINUTES < 5 )); then
     echo "Invalid collector interval: ${COLLECTOR_MINUTES}. Use a whole number of minutes, 5 or greater." >&2
+    exit 1
+  fi
+}
+
+prompt_for_auto_update() {
+  if [[ "${AUTO_UPDATE_SET}" -eq 0 && -t 0 ]]; then
+    local reply=""
+    read -r -p "Enable automatic daily GitHub updates when a newer version is available? [no]: " reply
+    case "${reply,,}" in
+      y|yes|true|1|on|daily) AUTO_UPDATE_ENABLED="1" ;;
+      *) AUTO_UPDATE_ENABLED="0" ;;
+    esac
+  fi
+
+  if ! [[ "${AUTO_UPDATE_HOUR}" =~ ^[0-9]+$ ]] || (( AUTO_UPDATE_HOUR < 0 || AUTO_UPDATE_HOUR > 23 )); then
+    echo "Invalid auto-update hour: ${AUTO_UPDATE_HOUR}. Use an hour from 0 to 23." >&2
     exit 1
   fi
 }
@@ -197,7 +228,7 @@ validate_source_dir() {
   local source_dir="$1"
   for required_path in \
     app.py \
-    auto_updater.py \
+    auto_update.py \
     collect_environment.py \
     collector.py \
     config_store.py \
@@ -261,6 +292,7 @@ SOURCE_DIR="$(resolve_source_dir)"
 validate_source_dir "${SOURCE_DIR}"
 prompt_for_port
 prompt_for_collector_minutes
+prompt_for_auto_update
 
 if [[ "${SKIP_OS_PACKAGES}" == "1" || "${SKIP_OS_PACKAGES,,}" == "true" || "${SKIP_OS_PACKAGES,,}" == "yes" ]]; then
   section "Skipping operating system packages"
@@ -279,7 +311,6 @@ section "Staging application bundle"
 copy_bundle_contents "${SOURCE_DIR}" "${INSTALL_DIR}"
 chmod +x \
   "${INSTALL_DIR}/collect_environment.py" \
-  "${INSTALL_DIR}/auto_updater.py" \
   "${INSTALL_DIR}/install.sh" \
   "${INSTALL_DIR}/install_oracledash.sh" \
   "${INSTALL_DIR}/scheduler_jobs.sh" \
@@ -303,9 +334,8 @@ IAM_MONITORING_LOG_DIR=${LOG_DIR}
 IAM_MONITORING_SERVICE_USER=${SERVICE_USER}
 IAM_MONITORING_DEFAULT_COLLECTION_MINUTES=${COLLECTOR_MINUTES}
 IAM_MONITORING_SCHEDULER_MINUTES=5
-IAM_MONITORING_AUTO_UPDATE_ENABLED=true
-# Optional external filesystem root for historical JSON reports
-# IAM_MONITORING_HISTORY_DIR=/mnt/fmw-history
+IAM_MONITORING_AUTO_UPDATE_ENABLED=${AUTO_UPDATE_ENABLED}
+IAM_MONITORING_AUTO_UPDATE_HOUR=${AUTO_UPDATE_HOUR}
 # Optional outbound proxy for GitHub update checks
 # IAM_MONITORING_HTTP_PROXY=http://proxy.example.com:80
 # IAM_MONITORING_HTTPS_PROXY=http://proxy.example.com:80
@@ -347,13 +377,12 @@ cp "${CRON_TMP}" "${CRON_FILE}"
 rm -f "${CRON_TMP}"
 chmod 644 "${CRON_FILE}"
 touch "${LOG_DIR}/scheduler.log"
-touch "${LOG_DIR}/auto-update.log"
-chown "${SERVICE_USER}:${SERVICE_USER}" "${LOG_DIR}/scheduler.log" "${LOG_DIR}/auto-update.log"
+chown "${SERVICE_USER}:${SERVICE_USER}" "${LOG_DIR}/scheduler.log"
 
 section "Validating application modules"
-"${INSTALL_DIR}/venv/bin/python" -m py_compile \
+  "${INSTALL_DIR}/venv/bin/python" -m py_compile \
   "${INSTALL_DIR}/app.py" \
-  "${INSTALL_DIR}/auto_updater.py" \
+  "${INSTALL_DIR}/auto_update.py" \
   "${INSTALL_DIR}/collect_environment.py" \
   "${INSTALL_DIR}/collector.py" \
   "${INSTALL_DIR}/config_store.py" \
@@ -390,8 +419,12 @@ echo "Installed service: ${SERVICE_NAME}"
 echo "Installed upgrade helper: ${UPGRADE_SERVICE_NAME}"
 echo "Cron service: ${CRON_SERVICE_NAME}"
 echo "Scheduler wake interval: every 5 minutes"
-echo "Daily GitHub auto-update check: 12:05 AM server local time"
 echo "Default per-environment collector interval: ${COLLECTOR_MINUTES} minutes"
+if [[ "${AUTO_UPDATE_ENABLED}" == "1" ]]; then
+  echo "Automatic GitHub updates: enabled daily after ${AUTO_UPDATE_HOUR}:00 local time"
+else
+  echo "Automatic GitHub updates: disabled"
+fi
 echo "Useful checks:"
 echo "  sudo systemctl status ${SERVICE_NAME} --no-pager"
 echo "  sudo systemctl status ${UPGRADE_SERVICE_NAME} --no-pager"
@@ -399,7 +432,6 @@ echo "  curl -I http://127.0.0.1:${DASHBOARD_PORT}/healthz"
 echo "  curl http://127.0.0.1:${DASHBOARD_PORT}/healthz"
 echo "  sudo journalctl -u ${SERVICE_NAME} -n 100 --no-pager"
 echo "  sudo tail -F ${LOG_DIR}/scheduler.log"
-echo "  sudo tail -F ${LOG_DIR}/auto-update.log"
 echo
 echo "GitHub update proxy:"
 echo "  Preferred: open Administration -> Help -> GitHub Update Proxy in the dashboard."

@@ -144,6 +144,7 @@ def build_help_details():
     snapshot_dir = os.path.join(state_dir, "snapshots")
     job_state_dir = os.path.join(state_dir, "job_state")
     update_proxy = merge_update_check_proxy_settings()
+    updates = get_global_defaults(DB_PATH, include_secret=False).get("updates") or {}
     return {
         "productName": PRODUCT_NAME,
         "version": version,
@@ -174,6 +175,9 @@ def build_help_details():
         "updateProxy": update_proxy,
         "githubUpgrade": {
             "enabled": True,
+            "automaticEnabled": bool(updates.get("automaticEnabled")),
+            "automaticHour": updates.get("automaticHour", 2),
+            "lastAutomaticCheckDate": updates.get("lastAutomaticCheckDate") or "",
             "repoUrl": github_repo_url(),
             "archiveUrl": github_archive_url(),
             "branch": GITHUB_BRANCH,
