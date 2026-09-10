@@ -2225,6 +2225,13 @@ def environment_idm_components(environment):
     return components
 
 
+def standalone_directory_recommendation_scope(environment, product_key):
+    product_settings = (environment or {}).get(product_key) or {}
+    if product_key not in ("oid", "oud"):
+        return "component"
+    return "component" if bool(product_settings.get("weblogicEnabled")) else "product_bundle"
+
+
 def patch_item_numbers(item):
     text = "{0} {1}".format(item.get("patchId") or "", item.get("description") or "")
     return {match for match in re.findall(r"\b\d{6,9}\b", text)}
@@ -2322,6 +2329,23 @@ def baseline_items_for_components(baseline, components):
     return relevant
 
 
+def baseline_bundle_items_for_components(baseline, components):
+    wanted_categories = set(components or [])
+    relevant = []
+    seen = set()
+    for item in baseline.get("patches") or []:
+        patch_id = str(item.get("patchId") or "")
+        if patch_id in seen:
+            continue
+        if patch_category(item.get("description")) not in wanted_categories:
+            continue
+        if not (set(item.get("applicability") or []) & wanted_categories):
+            continue
+        relevant.append(item)
+        seen.add(patch_id)
+    return relevant
+
+
 def patch_matches_baseline(patch, baseline_item):
     if baseline_item["patchId"] in patch_item_numbers(patch):
         return True
@@ -2360,7 +2384,7 @@ def opatch_inventory_components(opatch):
     return list(dict.fromkeys(components))
 
 
-def build_fmw_patch_recommendation(opatch, environment, oracle_home, components=None):
+def build_fmw_patch_recommendation(opatch, environment, oracle_home, components=None, recommendation_scope="component"):
     opatch = opatch or {}
     family = detect_fmw_patch_family(opatch, oracle_home)
     if not family:
@@ -2372,14 +2396,21 @@ def build_fmw_patch_recommendation(opatch, environment, oracle_home, components=
         }
     baseline = FMW_PATCH_BASELINES[family]
     components = list(dict.fromkeys(components or opatch_inventory_components(opatch) or environment_idm_components(environment) or ALL_IDM_COMPONENTS))
+    product_bundle_only = str(recommendation_scope or "").strip().lower() == "product_bundle"
+    required = (
+        baseline_bundle_items_for_components(baseline, components)
+        if product_bundle_only
+        else baseline_items_for_components(baseline, components)
+    )
     patches = list(opatch.get("patches") or [])
     installed_ids = set()
     for item in patches:
         installed_ids.update(patch_item_numbers(item))
-    latest_patch = baseline["latestPatch"]
+    latest_patch = required[0] if product_bundle_only and required else baseline["latestPatch"]
     if not installed_ids:
         latest_missing = dict(latest_patch)
         latest_missing["components"] = [component for component in latest_patch.get("applicability") or [] if component in components]
+        scope_label = "product bundle patch" if product_bundle_only else "Stack Patch Bundle"
         return {
             "family": baseline["family"],
             "version": baseline["version"],
@@ -2387,10 +2418,12 @@ def build_fmw_patch_recommendation(opatch, environment, oracle_home, components=
             "latestPatchId": latest_patch["patchId"],
             "catalogSource": baseline.get("catalogSource", "bundled"),
             "components": components,
+            "recommendationScope": "product_bundle" if product_bundle_only else "component",
             "status": "updates_recommended",
             "baseInstall": True,
-            "message": "OPatch lsinventory did not report any installed patches. This ORACLE_HOME appears to be a base {0} installation. Please review Oracle KM document KA754 and apply the latest available {0} Stack Patch Bundle, currently {1} Patch {2}.".format(
+            "message": "OPatch lsinventory did not report any installed patches. This ORACLE_HOME appears to be a base {0} installation. Please review Oracle KM document KA754 and apply the latest available {0} {1}, currently {2} Patch {3}.".format(
                 baseline["version"],
+                scope_label,
                 baseline["latestRelease"],
                 latest_patch["patchId"],
             ),
@@ -2403,7 +2436,6 @@ def build_fmw_patch_recommendation(opatch, environment, oracle_home, components=
                 "recommendationStatus": "missing",
             }],
         }
-    required = baseline_items_for_components(baseline, components)
     matched_required = set()
     comparison_rows = []
     by_category = {}
@@ -2461,6 +2493,7 @@ def build_fmw_patch_recommendation(opatch, environment, oracle_home, components=
         "latestPatchId": latest_patch["patchId"],
         "catalogSource": baseline.get("catalogSource", "bundled"),
         "components": components,
+        "recommendationScope": "product_bundle" if product_bundle_only else "component",
         "status": status,
         "message": message,
         "missingPatches": missing,
@@ -2975,6 +3008,15 @@ def enrich_oud_shared_metrics(target, environment, metrics, progress=None):
         "products": [],
         "patches": [],
     }
+    if isinstance(result.get("opatch"), dict) and not result["opatch"].get("error"):
+        result["opatch"]["recommendation"] = build_fmw_patch_recommendation(
+            result["opatch"],
+            environment,
+            oracle_home,
+            components=["OUD"],
+            recommendation_scope=standalone_directory_recommendation_scope(environment, "oud"),
+        )
+        result["opatch"]["patchComparisonRows"] = result["opatch"]["recommendation"].get("comparisonRows", [])
     certificates, certificate_error = task_result(task_results, "certificates", ([], "OUD certificate collection failed."))
     result["certificates"] = certificates
     result["certificateError"] = certificate_error
@@ -3491,7 +3533,13 @@ def get_oid_metrics(target, environment, progress=None):
             opatch = opatch_future.result()
         except Exception as exc:
             opatch = {"error": str(exc), "versions": [], "products": [], "patches": []}
-        opatch["recommendation"] = build_fmw_patch_recommendation(opatch, environment, oracle_home, components=["OID"])
+        opatch["recommendation"] = build_fmw_patch_recommendation(
+            opatch,
+            environment,
+            oracle_home,
+            components=["OID"],
+            recommendation_scope=standalone_directory_recommendation_scope(environment, "oid"),
+        )
         opatch["patchComparisonRows"] = opatch["recommendation"].get("comparisonRows", [])
     else:
         opatch = {
@@ -8766,6 +8814,7 @@ def refresh_saved_opatch_recommendations(dashboard_payload):
             environment,
             oracle_home,
             components=component_by_product.get(product_key),
+            recommendation_scope=standalone_directory_recommendation_scope(environment, product_key),
         )
         opatch["recommendation"] = recommendation
         opatch["patchComparisonRows"] = recommendation.get("comparisonRows", [])
