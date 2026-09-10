@@ -2353,4 +2353,34 @@ const selected=findLogScopeSelection(coerceList(logState.profiles),logState.acti
 if(!selected.group||selectedLogScopeGroupIsOaaV134(selected))return html;
 return String(html||"").replace(/<section class="panel"><div class="panel-header"><div><h3 class="panel-title">OAA Kubernetes Log Commands<\/h3>[\s\S]*?<\/section>(?=<\/div>$)/,"");
 };
+
+// Version 139: group verbose OUD rows into collapsible sections.
+function groupOudRowsV139(items,keyBuilder,labelBuilder){
+const groups=[];
+const byKey={};
+coerceList(items).forEach(function(item){
+const key=String(keyBuilder(item)||"Other").trim()||"Other";
+if(!byKey[key]){
+byKey[key]={key:key,label:String(labelBuilder(item)||key).trim()||key,rows:[]};
+groups.push(byKey[key]);
+}
+byKey[key].rows.push(item);
+});
+return groups;
+}
+function renderOudCollapseGroupV139(group,index,columns,rowRenderer){
+return`<details class="oud-collapse-item" ${index===0?"open":""}><summary class="oud-collapse-summary"><span class="oud-collapse-title"><span class="oud-collapse-toggle" aria-hidden="true"></span>${escapeHtml(group.label)}</span><small>${escapeHtml(group.rows.length)} row${group.rows.length===1?"":"s"}</small></summary><div class="oud-collapse-body"><div class="table-wrap"><table><thead><tr>${columns.map(function(label){return`<th>${escapeHtml(label)}</th>`;}).join("")}</tr></thead><tbody>${group.rows.map(rowRenderer).join("")}</tbody></table></div></div></details>`;
+}
+renderOudMonitorEntries=function(rows,error){
+const items=coerceList(rows);
+const showInstance=oudRowsHaveMultipleInstances(items);
+const groups=groupOudRowsV139(items,function(item){return`${showInstance?item.instanceName||"-":""}||${item.entry||item.category||"Other"}`;},function(item){const label=item.entry||item.category||"Other";return showInstance?`${label} (${item.instanceName||"-"})`:label;});
+return`<section class="panel"><div class="panel-header"><div><h3 class="panel-title">OUD Monitoring</h3><p class="panel-copy">Selected cn=monitor LDAP entries collected with ldapsearch from the OUD administration connector.</p></div></div>${items.length===0?renderEmptyPanel("No OUD monitoring rows",error||"No cn=monitor details were returned for the selected instance."):`<div class="oud-collapse-list">${groups.map(function(group,index){return renderOudCollapseGroupV139(group,index,["Metric","Value"],function(item){return`<tr><td>${escapeHtml(item.name||item.key||"-")}</td><td>${escapeHtml(formatValue(item.value,"-"))}</td></tr>`;});}).join("")}</div>${error?`<p class="table-note">${escapeHtml(error)}</p>`:""}`}</section>`;
+};
+renderOudPasswordPolicies=function(rows,error){
+const items=coerceList(rows);
+const showInstance=oudRowsHaveMultipleInstances(items);
+const groups=groupOudRowsV139(items,function(item){return`${showInstance?item.instanceName||"-":""}||${item.policy||item.name||"Other"}`;},function(item){const label=item.policy||item.name||"Other";return showInstance?`${label} (${item.instanceName||"-"})`:label;});
+return`<section class="panel"><div class="panel-header"><div><h3 class="panel-title">Password Policies</h3><p class="panel-copy">Password policy names and attributes collected through dsconfig using the selected OUD instance credentials.</p></div></div>${items.length===0?renderEmptyPanel("No password policies",error||"No password policy details were returned for the selected instance."):`<div class="oud-collapse-list">${groups.map(function(group,index){return renderOudCollapseGroupV139(group,index,["Type","Property","Value"],function(item){return`<tr><td>${escapeHtml(item.type||"-")}</td><td>${escapeHtml(item.property||"-")}</td><td>${escapeHtml(formatValue(item.value,"-"))}</td></tr>`;});}).join("")}</div>${error?`<p class="table-note">${escapeHtml(error)}</p>`:""}`}</section>`;
+};
 loadStoredState();render();loadAllData(false);
