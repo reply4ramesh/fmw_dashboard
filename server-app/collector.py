@@ -2340,7 +2340,27 @@ def recommendation_text(item):
     return "{0} - {1}".format(item.get("patchId") or "-", item.get("description") or "-")
 
 
-def build_fmw_patch_recommendation(opatch, environment, oracle_home):
+def opatch_inventory_components(opatch):
+    haystack = " ".join([
+        " ".join(str(item.get("name") or "") for item in (opatch or {}).get("products") or []),
+        " ".join(str(item or "") for item in (opatch or {}).get("distributions") or []),
+        " ".join(str(item.get("description") or "") for item in (opatch or {}).get("patches") or []),
+    ]).upper()
+    components = []
+    markers = (
+        ("OIG", ("ORACLE IDENTITY GOVERNANCE", "ORACLE IDENTITY MANAGER", " OIM ", "OIM BUNDLE", " OIG ")),
+        ("OAM", ("ORACLE ACCESS MANAGER", "ACCESS MANAGER", "OAM BUNDLE", " OAM ")),
+        ("OUD", ("ORACLE UNIFIED DIRECTORY", "OUD BUNDLE", " OUD ")),
+        ("OID", ("ORACLE INTERNET DIRECTORY", "OID BUNDLE", " OID ")),
+    )
+    padded = " {0} ".format(haystack)
+    for component, tokens in markers:
+        if any(token in padded for token in tokens):
+            components.append(component)
+    return list(dict.fromkeys(components))
+
+
+def build_fmw_patch_recommendation(opatch, environment, oracle_home, components=None):
     opatch = opatch or {}
     family = detect_fmw_patch_family(opatch, oracle_home)
     if not family:
@@ -2351,7 +2371,7 @@ def build_fmw_patch_recommendation(opatch, environment, oracle_home):
             "comparisonRows": [],
         }
     baseline = FMW_PATCH_BASELINES[family]
-    components = environment_idm_components(environment) or ALL_IDM_COMPONENTS
+    components = list(dict.fromkeys(components or opatch_inventory_components(opatch) or environment_idm_components(environment) or ALL_IDM_COMPONENTS))
     patches = list(opatch.get("patches") or [])
     installed_ids = set()
     for item in patches:
@@ -3471,7 +3491,7 @@ def get_oid_metrics(target, environment, progress=None):
             opatch = opatch_future.result()
         except Exception as exc:
             opatch = {"error": str(exc), "versions": [], "products": [], "patches": []}
-        opatch["recommendation"] = build_fmw_patch_recommendation(opatch, environment, oracle_home)
+        opatch["recommendation"] = build_fmw_patch_recommendation(opatch, environment, oracle_home, components=["OID"])
         opatch["patchComparisonRows"] = opatch["recommendation"].get("comparisonRows", [])
     else:
         opatch = {
@@ -8347,7 +8367,7 @@ def get_oam_metrics(target, environment, app_checks, weblogic_metrics=None, opat
     ], max_workers=3)
 
     opatch = task_result(initial_results, "opatch", {"versions": [], "products": [], "patches": []})
-    opatch["recommendation"] = build_fmw_patch_recommendation(opatch, environment, oracle_home)
+    opatch["recommendation"] = build_fmw_patch_recommendation(opatch, environment, oracle_home, components=["OAM"])
     opatch["patchComparisonRows"] = opatch["recommendation"].get("comparisonRows", [])
     certificates, certificate_error = task_result(initial_results, "certificates", ([], "OAM certificate collection task failed."))
     config = task_result(initial_results, "config", {"groups": {}, "summary": {}, "curated": {}, "error": "OAM config collection task failed."})
@@ -8441,7 +8461,7 @@ def get_oig_metrics(target, environment, app_checks, weblogic_metrics=None, opat
             opatch = {"error": str(exc), "versions": [], "products": [], "patches": []}
     else:
         opatch = collect_opatch_inventory(oig_target, oracle_home, progress=progress)
-    opatch["recommendation"] = build_fmw_patch_recommendation(opatch, environment, oracle_home)
+    opatch["recommendation"] = build_fmw_patch_recommendation(opatch, environment, oracle_home, components=["OIG"])
     opatch["patchComparisonRows"] = opatch["recommendation"].get("comparisonRows", [])
     certificates, certificate_error = collect_ssl_certificates(
         oig_target,
@@ -8723,7 +8743,14 @@ def refresh_saved_opatch_recommendations(dashboard_payload):
             or ""
         )
 
-    def refresh_opatch(opatch, oracle_home):
+    component_by_product = {
+        "oam": ["OAM"],
+        "oig": ["OIG"],
+        "oud": ["OUD"],
+        "oid": ["OID"],
+    }
+
+    def refresh_opatch(opatch, oracle_home, product_key=""):
         if not isinstance(opatch, dict):
             return opatch
         if not (
@@ -8734,7 +8761,12 @@ def refresh_saved_opatch_recommendations(dashboard_payload):
         ):
             return opatch
         opatch = dict(opatch)
-        recommendation = build_fmw_patch_recommendation(opatch, environment, oracle_home)
+        recommendation = build_fmw_patch_recommendation(
+            opatch,
+            environment,
+            oracle_home,
+            components=component_by_product.get(product_key),
+        )
         opatch["recommendation"] = recommendation
         opatch["patchComparisonRows"] = recommendation.get("comparisonRows", [])
         return opatch
@@ -8745,7 +8777,7 @@ def refresh_saved_opatch_recommendations(dashboard_payload):
             continue
         metrics = dict(metrics)
         oracle_home = oracle_home_for(product_key, metrics)
-        metrics["opatch"] = refresh_opatch(metrics.get("opatch"), oracle_home)
+        metrics["opatch"] = refresh_opatch(metrics.get("opatch"), oracle_home, product_key)
         if product_key == "weblogic":
             cluster_nodes = []
             changed_nodes = False
