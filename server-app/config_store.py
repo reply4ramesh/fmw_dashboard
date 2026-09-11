@@ -41,9 +41,8 @@ def deep_copy(value):
     return copy.deepcopy(value)
 
 
-def admin_endpoint_url(admin_url, path, default_port=7001, scheme_override="", port_override=None):
+def admin_local_url(admin_url, path, default_port=7001):
     scheme = "http"
-    host = "localhost"
     port = default_port
     text = str(admin_url or "").strip()
     if text:
@@ -51,38 +50,20 @@ def admin_endpoint_url(admin_url, path, default_port=7001, scheme_override="", p
         try:
             parsed = urlparse(candidate)
             scheme = parsed.scheme or scheme
-            host = parsed.hostname or host
             port = parsed.port or (443 if scheme == "https" else default_port)
         except ValueError:
             pass
-    scheme = str(scheme_override or scheme).strip() or "http"
-    if port_override is not None:
-        port = port_override
     suffix = path if str(path or "").startswith("/") else "/{0}".format(path)
-    display_host = "[{0}]".format(host) if ":" in host and not host.startswith("[") else host
-    return "{0}://{1}:{2}{3}".format(scheme, display_host, port, suffix)
-
-
-def admin_local_url(admin_url, path, default_port=7001):
-    """Backward-compatible wrapper; endpoints now retain the configured admin host."""
-    return admin_endpoint_url(admin_url, path, default_port=default_port)
+    return "{0}://localhost:{1}{2}".format(scheme, port, suffix)
 
 
 def default_oam_checks(admin_url=""):
     checks = deep_copy(DEFAULT_OAM_CHECKS)
     for check in checks:
         if check.get("name") == "OAM Console":
-            check["url"] = admin_endpoint_url(admin_url, "/oamconsole")
-        elif check.get("name") == "OAM Access":
-            check["url"] = admin_endpoint_url(
-                admin_url,
-                "/access",
-                default_port=14150,
-                scheme_override="http",
-                port_override=14150,
-            )
+            check["url"] = admin_local_url(admin_url, "/oamconsole")
         elif check.get("name") == "Fusion Middleware EM":
-            check["url"] = admin_endpoint_url(admin_url, "/em")
+            check["url"] = admin_local_url(admin_url, "/em")
     return checks
 
 
@@ -247,7 +228,7 @@ def normalize_checks(checks, default_checks):
     return normalized
 
 
-def is_local_default_url(url, expected_path, ports=None):
+def is_local_default_url(url, expected_path, ports):
     text = str(url or "").strip()
     if not text:
         return False
@@ -259,8 +240,7 @@ def is_local_default_url(url, expected_path, ports=None):
         return False
     host = str(parsed.hostname or "").lower()
     path = str(parsed.path or "").rstrip("/") or "/"
-    port_matches = ports is None or port in ports
-    return host in ("localhost", "127.0.0.1", "::1") and path == expected_path and port_matches
+    return host in ("localhost", "127.0.0.1") and path == expected_path and port in ports
 
 
 def normalize_oam_checks(checks, admin_url=""):
@@ -273,12 +253,10 @@ def normalize_oam_checks(checks, admin_url=""):
         if str(item.get("product") or "").lower() != "oam":
             continue
         name = str(item.get("name") or "").strip().lower()
-        if name == "oam console" and is_local_default_url(item.get("url"), "/oamconsole"):
-            item["url"] = default_by_name.get(name, admin_endpoint_url(admin_url, "/oamconsole"))
-        elif name == "oam access" and is_local_default_url(item.get("url"), "/access", {14150, 14151}):
-            item["url"] = default_by_name.get(name, admin_endpoint_url(admin_url, "/access", 14150, "http", 14150))
-        elif name == "fusion middleware em" and is_local_default_url(item.get("url"), "/em"):
-            item["url"] = default_by_name.get(name, admin_endpoint_url(admin_url, "/em"))
+        if name == "oam console" and is_local_default_url(item.get("url"), "/oamconsole", {7001}):
+            item["url"] = default_by_name.get(name, admin_local_url(admin_url, "/oamconsole"))
+        elif name == "fusion middleware em" and is_local_default_url(item.get("url"), "/em", {7001, 7201}):
+            item["url"] = default_by_name.get(name, admin_local_url(admin_url, "/em"))
     return normalized
 
 
@@ -518,14 +496,6 @@ def default_environment(name=None, host=None):
                 "privateKeyPath": "",
                 "passphrase": "",
             },
-            "keystores": {
-                "identityPath": "",
-                "identityType": "JKS",
-                "identityPassword": "",
-                "trustPath": "",
-                "trustType": "JKS",
-                "trustPassword": "",
-            },
             "cluster": {
                 "enabled": False,
                 "nodes": [],
@@ -585,6 +555,17 @@ def default_environment(name=None, host=None):
             "adminUrl": "",
             "adminUsername": "xelsysadm",
             "adminPassword": "",
+            "database": {
+                "host": "",
+                "port": "1521",
+                "service": "",
+                "name": "",
+                "schema": "",
+                "username": "",
+                "protocol": "",
+                "connectString": "",
+            },
+            "databasePassword": "",
             "checks": deep_copy(DEFAULT_OIG_CHECKS),
         },
         "oaa": {
@@ -911,14 +892,6 @@ def normalize_environment(payload, existing=None):
                 default_port=22,
                 default_mode="user_password",
             ),
-            "keystores": {
-                "identityPath": str((weblogic_payload.get("keystores") or {}).get("identityPath") or (existing_weblogic.get("keystores") or {}).get("identityPath") or "").strip(),
-                "identityType": str((weblogic_payload.get("keystores") or {}).get("identityType") or (existing_weblogic.get("keystores") or {}).get("identityType") or "JKS").strip() or "JKS",
-                "identityPassword": preserve_secret((weblogic_payload.get("keystores") or {}).get("identityPassword"), (existing_weblogic.get("keystores") or {}).get("identityPassword")),
-                "trustPath": str((weblogic_payload.get("keystores") or {}).get("trustPath") or (existing_weblogic.get("keystores") or {}).get("trustPath") or "").strip(),
-                "trustType": str((weblogic_payload.get("keystores") or {}).get("trustType") or (existing_weblogic.get("keystores") or {}).get("trustType") or "JKS").strip() or "JKS",
-                "trustPassword": preserve_secret((weblogic_payload.get("keystores") or {}).get("trustPassword"), (existing_weblogic.get("keystores") or {}).get("trustPassword")),
-            },
             "cluster": deep_copy(existing_weblogic.get("cluster") or base["weblogic"].get("cluster") or {}),
             "jstatPath": str(
                 weblogic_payload.get("jstatPath")
@@ -1067,6 +1040,15 @@ def normalize_environment(payload, existing=None):
                 oig_payload.get("adminPassword"),
                 existing_oig.get("adminPassword"),
                 allow_blank=coerce_bool(oig_payload.get("clearAdminPassword"), False),
+            ),
+            "database": normalize_oaa_database_payload(
+                oig_payload.get("database"),
+                existing_oig.get("database") or base["oig"].get("database"),
+            ),
+            "databasePassword": preserve_secret(
+                oig_payload.get("databasePassword"),
+                existing_oig.get("databasePassword"),
+                allow_blank=coerce_bool(oig_payload.get("clearDatabasePassword"), False),
             ),
             "checks": normalize_checks(
                 oig_payload.get("checks") if "checks" in oig_payload else existing_oig.get("checks"),
@@ -1313,8 +1295,11 @@ def normalize_environment(payload, existing=None):
         or products.get("oig")
         or products.get("soa")
     )
-    # OAM, OIG and SOA are WebLogic-domain products and may span multiple hosts.
-    # Preserve their saved/discovered cluster configuration just like pure WebLogic profiles.
+    pure_weblogic = bool(products.get("weblogic")) and not any(
+        products.get(key) for key in ("oam", "oud", "oig", "oid", "oaa", "soa")
+    )
+    if not pure_weblogic:
+        environment["weblogic"]["cluster"]["enabled"] = False
 
     if products.get("oig"):
         environment["oig"]["oracleHome"] = environment["weblogic"].get("oracleHome") or environment["oig"].get("oracleHome") or ""
@@ -1593,16 +1578,6 @@ def serialize_environment(environment, include_sensitive=False):
                 "nodes": [serialize_weblogic_cluster_node(node) for node in weblogic_cluster_nodes],
                 "node2": serialize_weblogic_cluster_node(weblogic_cluster_nodes[0] if weblogic_cluster_nodes else weblogic_node2),
             },
-            "keystores": {
-                "identityPath": (weblogic.get("keystores") or {}).get("identityPath") or "",
-                "identityType": (weblogic.get("keystores") or {}).get("identityType") or "JKS",
-                "identityPassword": (weblogic.get("keystores") or {}).get("identityPassword") if include_sensitive else "",
-                "hasIdentityPassword": bool((weblogic.get("keystores") or {}).get("identityPassword")),
-                "trustPath": (weblogic.get("keystores") or {}).get("trustPath") or "",
-                "trustType": (weblogic.get("keystores") or {}).get("trustType") or "JKS",
-                "trustPassword": (weblogic.get("keystores") or {}).get("trustPassword") if include_sensitive else "",
-                "hasTrustPassword": bool((weblogic.get("keystores") or {}).get("trustPassword")),
-            },
             "jstatPath": weblogic.get("jstatPath") or "",
             "serverNames": deep_copy(weblogic.get("serverNames") or []),
         },
@@ -1645,6 +1620,9 @@ def serialize_environment(environment, include_sensitive=False):
             "adminUsername": oig.get("adminUsername") or "xelsysadm",
             "adminPassword": "",
             "hasAdminPassword": bool(oig.get("adminPassword")),
+            "database": normalize_oaa_database_payload(oig.get("database")),
+            "databasePassword": "",
+            "hasDatabasePassword": bool(oig.get("databasePassword")),
             "checks": deep_copy(oig.get("checks") or []),
         },
         "oaa": {

@@ -5999,6 +5999,206 @@ def collect_oaa_schema_table_metrics(target, database, password, progress=None, 
     }
 
 
+def build_oim_product_info_jdbc_command(jdbc_url, username, password, oracle_home_hint=""):
+    java_source = r"""
+import java.sql.*;
+
+public class IamOimProductInfo {
+    static Connection connection;
+    static DatabaseMetaData metadata;
+    static String owner;
+
+    static String findTable(String... names) throws Exception {
+        for (String name : names) {
+            try (ResultSet rs = metadata.getTables(null, owner, name.toUpperCase(), new String[]{"TABLE", "VIEW", "SYNONYM"})) {
+                if (rs.next()) return rs.getString("TABLE_NAME");
+            }
+        }
+        for (String name : names) {
+            try (ResultSet rs = metadata.getTables(null, null, name.toUpperCase(), new String[]{"TABLE", "VIEW", "SYNONYM"})) {
+                if (rs.next()) return rs.getString("TABLE_NAME");
+            }
+        }
+        return "";
+    }
+
+    static boolean hasColumn(String table, String column) throws Exception {
+        if (table == null || table.length() == 0 || column == null || column.length() == 0) return false;
+        try (ResultSet rs = metadata.getColumns(null, owner, table.toUpperCase(), column.toUpperCase())) {
+            if (rs.next()) return true;
+        }
+        try (ResultSet rs = metadata.getColumns(null, null, table.toUpperCase(), column.toUpperCase())) {
+            return rs.next();
+        }
+    }
+
+    static String pickColumn(String table, String... names) throws Exception {
+        for (String name : names) if (hasColumn(table, name)) return name;
+        return "";
+    }
+
+    static String expr(String table, String... candidates) throws Exception {
+        String column = pickColumn(table, candidates);
+        return column.length() == 0 ? "'-'" : "to_char(" + column + ")";
+    }
+
+    static String clean(Object value) {
+        String text = String.valueOf(value == null ? "-" : value);
+        return text.replace('|', ' ').replace('\n', ' ').replace('\r', ' ').trim();
+    }
+
+    static void countTable(String key, String label, String table) throws Exception {
+        if (table.length() == 0) {
+            System.out.println("COUNT|" + key + "|" + label + "|-|Table not found");
+            return;
+        }
+        try (Statement st = connection.createStatement(); ResultSet rs = st.executeQuery("select count(*) from " + table)) {
+            rs.next();
+            System.out.println("COUNT|" + key + "|" + label + "|" + rs.getLong(1) + "|OK");
+        } catch (Exception exc) {
+            System.out.println("COUNT|" + key + "|" + label + "|-|" + clean(exc.getMessage()));
+        }
+    }
+
+    static void sample(String section, String table, String[] headers, String[] expressions) throws Exception {
+        if (table.length() == 0) return;
+        StringBuilder sql = new StringBuilder("select ");
+        for (int i = 0; i < expressions.length; i++) {
+            if (i > 0) sql.append(", ");
+            sql.append(expressions[i]).append(" c").append(i + 1);
+        }
+        sql.append(" from ").append(table).append(" where rownum <= 25");
+        try (Statement st = connection.createStatement(); ResultSet rs = st.executeQuery(sql.toString())) {
+            while (rs.next()) {
+                StringBuilder row = new StringBuilder("ROW|").append(section);
+                for (String header : headers) row.append("|").append(header);
+                row.append("|::");
+                for (int i = 0; i < expressions.length; i++) row.append("|").append(clean(rs.getString(i + 1)));
+                System.out.println(row.toString());
+            }
+        } catch (Exception exc) {
+            System.out.println("ERROR|" + section + "|" + clean(exc.getMessage()));
+        }
+    }
+
+    public static void main(String[] args) throws Exception {
+        String url = args[0], user = args[1], password = args[2];
+        Class.forName("oracle.jdbc.OracleDriver");
+        try (Connection c = DriverManager.getConnection(url, user, password)) {
+            connection = c;
+            metadata = c.getMetaData();
+            owner = user.toUpperCase();
+            String users = findTable("USR");
+            String roles = findTable("UGP");
+            String orgs = findTable("ACT", "ORC");
+            String applications = findTable("APP_INSTANCE", "OIM_APP_INSTANCE");
+            String resources = findTable("OBJ");
+            String policies = findTable("POL");
+            String connectors = findTable("SVR", "IT_RESOURCE");
+            String passwordPolicies = findTable("PCQ", "PWD_POLICY", "PASSWORD_POLICY");
+            countTable("users", "Users", users);
+            countTable("roles", "Roles", roles);
+            countTable("organizations", "Organizations", orgs);
+            countTable("applications", "Application Instances", applications);
+            countTable("resources", "Resource Objects", resources);
+            countTable("accessPolicies", "Access Policies", policies);
+            countTable("connectors", "IT Resources / Connectors", connectors);
+            countTable("passwordPolicies", "Password Policies", passwordPolicies);
+            sample("applications", applications, new String[]{"Name", "Display Name", "Resource Object"}, new String[]{expr(applications, "APP_INSTANCE_NAME", "NAME"), expr(applications, "DISPLAY_NAME", "APP_INSTANCE_DISPLAY_NAME"), expr(applications, "OBJ_NAME", "RESOURCE_OBJECT_NAME")});
+            sample("resources", resources, new String[]{"Name", "Description", "Type"}, new String[]{expr(resources, "OBJ_NAME", "NAME"), expr(resources, "OBJ_DESC", "DESCRIPTION"), expr(resources, "OBJ_TYPE", "TYPE")});
+            sample("accessPolicies", policies, new String[]{"Name", "Description", "Priority"}, new String[]{expr(policies, "POL_NAME", "NAME"), expr(policies, "POL_DESC", "DESCRIPTION"), expr(policies, "POL_PRIORITY", "PRIORITY")});
+            sample("passwordPolicies", passwordPolicies, new String[]{"Policy Name", "Description", "Minimum Length", "Expires After Days"}, new String[]{expr(passwordPolicies, "PCQ_NAME", "POLICY_NAME", "NAME"), expr(passwordPolicies, "PCQ_DESC", "DESCRIPTION"), expr(passwordPolicies, "MIN_LENGTH", "MINIMUM_LENGTH", "PCQ_MIN_LENGTH"), expr(passwordPolicies, "EXPIRES_AFTER", "MAX_PASSWORD_AGE", "PCQ_MAX_AGE")});
+            sample("connectors", connectors, new String[]{"Name", "Type", "Host"}, new String[]{expr(connectors, "SVR_NAME", "NAME"), expr(connectors, "SVR_TYPE", "TYPE"), expr(connectors, "SVR_HOST", "HOST")});
+        }
+    }
+}
+"""
+    jdbc_args = [jdbc_url, username, password]
+    template = (
+        "set +e\n"
+        "export ORACLE_HOME=__ORACLE_HOME_HINT__\n"
+        "find_java_bin() { for candidate in \"$JAVA_HOME/bin/java\" \"$ORACLE_HOME/jdk/bin/java\" \"$ORACLE_HOME/jdk/jre/bin/java\" /usr/java*/bin/java /usr/lib/jvm/*/bin/java; do [ -x \"$candidate\" ] && { printf '%s\\n' \"$candidate\"; return 0; }; done; command -v java 2>/dev/null; }\n"
+        "find_javac_bin() { java_bin=\"$1\"; java_dir=$(dirname \"$java_bin\" 2>/dev/null); for candidate in \"$java_dir/javac\" \"$JAVA_HOME/bin/javac\" \"$ORACLE_HOME/jdk/bin/javac\" /usr/java*/bin/javac /usr/lib/jvm/*/bin/javac; do [ -x \"$candidate\" ] && { printf '%s\\n' \"$candidate\"; return 0; }; done; command -v javac 2>/dev/null; }\n"
+        "find_ojdbc_jar() { for candidate in \"$ORACLE_HOME/oracle_common/modules/oracle.jdbc/ojdbc\"*.jar \"$ORACLE_HOME/oracle_common/modules/\"*/ojdbc*.jar \"$ORACLE_HOME/wlserver/server/lib/ojdbc\"*.jar \"$ORACLE_HOME/jdbc/lib/ojdbc\"*.jar \"$ORACLE_HOME/lib/ojdbc\"*.jar; do [ -f \"$candidate\" ] && { printf '%s\\n' \"$candidate\"; return 0; }; done; find /opt/oracle /u01 /refresh/home /home -name 'ojdbc*.jar' -type f -print -quit 2>/dev/null; }\n"
+        "java_bin=$(find_java_bin | head -1)\n"
+        "if [ -z \"$java_bin\" ]; then echo \"Java runtime was not found for OIM schema query.\"; exit 127; fi\n"
+        "ojdbc_jar=$(find_ojdbc_jar | head -1)\n"
+        "if [ -z \"$ojdbc_jar\" ]; then echo \"Oracle JDBC driver ojdbc*.jar was not found for OIM schema query.\"; exit 127; fi\n"
+        "classdir=$(mktemp -d /tmp/iam-oim-jdbc.XXXXXX)\n"
+        "src=\"$classdir/IamOimProductInfo.java\"\n"
+        "trap 'rm -rf \"$classdir\"' EXIT\n"
+        "cat > \"$src\" <<'IAM_MONITORING_JAVA'\n"
+        "__JAVA_SOURCE__"
+        "IAM_MONITORING_JAVA\n"
+        "javac_bin=$(find_javac_bin \"$java_bin\" | head -1)\n"
+        "if [ -n \"$javac_bin\" ]; then \"$javac_bin\" -cp \"$ojdbc_jar\" -d \"$classdir\" \"$src\" && \"$java_bin\" -cp \"$ojdbc_jar:$classdir\" IamOimProductInfo __JDBC_ARGS__; exit $?; fi\n"
+        "\"$java_bin\" -cp \"$ojdbc_jar\" \"$src\" __JDBC_ARGS__\n"
+    )
+    return (
+        template
+        .replace("__ORACLE_HOME_HINT__", shlex.quote(str(oracle_home_hint or "").strip()))
+        .replace("__JAVA_SOURCE__", java_source)
+        .replace("__JDBC_ARGS__", " ".join(shlex.quote(str(value)) for value in jdbc_args))
+    )
+
+
+def parse_oim_product_info_output(text):
+    summary = {}
+    sections = {}
+    errors = []
+    for raw_line in str(text or "").splitlines():
+        line = raw_line.strip()
+        if not line or "|" not in line:
+            continue
+        parts = line.split("|")
+        if parts[0] == "COUNT" and len(parts) >= 5:
+            try:
+                count = int(parts[3])
+            except (TypeError, ValueError):
+                count = None
+            summary[parts[1]] = {"label": parts[2], "count": count, "status": parts[4]}
+        elif parts[0] == "ROW" and len(parts) >= 5 and "::" in parts:
+            marker = parts.index("::")
+            section = parts[1]
+            headers = parts[2:marker]
+            values = parts[marker + 1:]
+            sections.setdefault(section, {"headers": headers, "rows": []})
+            sections[section]["rows"].append(dict(zip(headers, values)))
+        elif parts[0] == "ERROR" and len(parts) >= 3:
+            errors.append("{0}: {1}".format(parts[1], parts[2]))
+    return {"summary": summary, "sections": sections, "errors": errors}
+
+
+def collect_oim_product_information(target, database, password, oracle_home="", progress=None):
+    database = normalize_oaa_database_details(database)
+    missing = oaa_database_missing_fields(database)
+    if missing:
+        return {"configured": False, "error": "Missing OIM database details: {0}.".format(", ".join(missing))}
+    username = str(database.get("username") or database.get("schema") or "").strip()
+    db_password = str(password or "").strip()
+    if not db_password:
+        return {"configured": False, "error": "Missing OIM database password."}
+    connect_string = oaa_database_connect_string(database)
+    if not connect_string:
+        return {"configured": False, "error": "Missing OIM database connect string."}
+    if callable(progress):
+        progress("Collecting OIM product information from the configured OIM schema.")
+    jdbc_url = oaa_jdbc_url_from_connect_string(connect_string)
+    command = build_oim_product_info_jdbc_command(jdbc_url, username, db_password, oracle_home)
+    result = run_target(target, command, timeout=180)
+    parsed = parse_oim_product_info_output(result.get("output"))
+    return {
+        "configured": True,
+        "databaseUser": username,
+        "connectTarget": "{0}:{1}/{2}".format(database.get("host") or "-", database.get("port") or "1521", database.get("service") or database.get("name") or "-"),
+        "summary": parsed.get("summary") or {},
+        "sections": parsed.get("sections") or {},
+        "errors": parsed.get("errors") or [],
+        "error": "" if result.get("exit_code") == 0 else str(result.get("output") or "OIM schema query failed.").strip(),
+        "command": "OIM product information query via JDBC Thin as {0}. SQL text and password hidden by dashboard.".format(username),
+    }
+
+
 def parse_oaa_helm_releases(text):
     payload = parse_json_payload(text)
     rows = []
@@ -8519,6 +8719,13 @@ def get_oig_metrics(target, environment, app_checks, weblogic_metrics=None, opat
         progress=progress,
         keystore_future=keystore_future,
     )
+    product_info = collect_oim_product_information(
+        oig_target,
+        oig.get("database") or {},
+        oig.get("databasePassword") or "",
+        oracle_home=oracle_home,
+        progress=progress,
+    )
 
     return {
         "configured": True,
@@ -8532,7 +8739,10 @@ def get_oig_metrics(target, environment, app_checks, weblogic_metrics=None, opat
             "adminUsername": oig.get("adminUsername") or "xelsysadm",
             "configured": bool(oig.get("adminUsername") and oig.get("adminPassword")),
             "hasPassword": bool(oig.get("adminPassword")),
+            "databaseConfigured": bool((oig.get("database") or {}).get("host") or (oig.get("database") or {}).get("connectString")),
+            "hasDatabasePassword": bool(oig.get("databasePassword")),
         },
+        "productInfo": product_info,
     }
 
 
