@@ -6169,11 +6169,89 @@ def parse_oim_product_info_output(text):
     return {"summary": summary, "sections": sections, "errors": errors}
 
 
-def collect_oim_product_information(target, database, password, oracle_home="", progress=None):
-    database = normalize_oaa_database_details(database)
+def parse_oim_jdbc_datasource_xml(text, source_file=""):
+    values = {}
+    try:
+        root = ET.fromstring(str(text or ""))
+        for element in root.iter():
+            tag = str(element.tag or "").split("}", 1)[-1].lower()
+            value = str(element.text or "").strip()
+            if not value:
+                continue
+            if tag == "url" and not values.get("connectString"):
+                values["connectString"] = value
+            elif tag == "name" and value.lower() in ("user", "username"):
+                parent = None
+                # ElementTree has no parent pointer; regex fallback below also covers the property form.
+            elif tag == "value" and not values.get("username"):
+                pass
+    except Exception:
+        pass
+    url_match = re.search(r"<url>\s*([^<]+?)\s*</url>", str(text or ""), re.I | re.S)
+    if url_match:
+        values["connectString"] = url_match.group(1).strip()
+    user_match = re.search(r"<(?:name|[^>]*name)>\s*user\s*</(?:name|[^>]*name)>\s*<[^>]*value[^>]*>\s*([^<]+?)\s*</[^>]*value>", str(text or ""), re.I | re.S)
+    if not user_match:
+        user_match = re.search(r"<property[^>]+name=[\"']user[\"'][^>]*>\s*<[^>]*value[^>]*>\s*([^<]+?)\s*</[^>]*value>", str(text or ""), re.I | re.S)
+    if not user_match:
+        user_match = re.search(r"<user>\s*([^<]+?)\s*</user>", str(text or ""), re.I | re.S)
+    if user_match:
+        values["username"] = user_match.group(1).strip()
+        values["schema"] = values["username"]
+    jdbc_url = str(values.get("connectString") or "")
+    simple = re.search(r"jdbc:oracle:thin:@//([^:/\s]+):(\d+)/([^\s<]+)", jdbc_url, re.I)
+    if simple:
+        values.update({"host": simple.group(1), "port": simple.group(2), "service": simple.group(3)})
+    elif jdbc_url.lower().startswith("jdbc:oracle:thin:@"):
+        descriptor = jdbc_url.split("@", 1)[1]
+        values["connectString"] = descriptor
+        host = re.search(r"HOST\s*=\s*([^)]+)", descriptor, re.I)
+        port = re.search(r"PORT\s*=\s*([^)]+)", descriptor, re.I)
+        service = re.search(r"SERVICE_NAME\s*=\s*([^)]+)", descriptor, re.I)
+        if host:
+            values["host"] = host.group(1).strip()
+        if port:
+            values["port"] = port.group(1).strip()
+        if service:
+            values["service"] = service.group(1).strip()
+    values["sourceFile"] = source_file
+    return normalize_oaa_database_details(values)
+
+
+def read_oim_operations_datasource(target, domain_home, progress=None):
+    if not str(domain_home or "").strip():
+        return {}, "DOMAIN_HOME is not configured, so oimOperationsDB*.xml could not be read."
+    command = (
+        "DH=__DOMAIN_HOME__; "
+        "for file in \"$DH\"/config/jdbc/oimOperationsDB*.xml; do "
+        "[ -f \"$file\" ] || continue; "
+        "printf 'IAM_MONITORING_OIM_DS_FILE=%s\\n' \"$file\"; cat \"$file\"; exit 0; "
+        "done; echo \"oimOperationsDB*.xml was not found under $DH/config/jdbc.\"; exit 1"
+    ).replace("__DOMAIN_HOME__", shlex.quote(str(domain_home or "").strip()))
+    if callable(progress):
+        progress("Reading OIM datasource from DOMAIN_HOME/config/jdbc/oimOperationsDB*.xml.")
+    result = run_target(target, command, timeout=45)
+    output = str(result.get("output") or "")
+    source_file = ""
+    xml_text = output
+    if output.startswith("IAM_MONITORING_OIM_DS_FILE="):
+        lines = output.splitlines()
+        source_file = lines[0].split("=", 1)[1].strip()
+        xml_text = "\n".join(lines[1:])
+    if result.get("exit_code") != 0:
+        return {}, output.strip() or "OIM datasource collection failed."
+    values = parse_oim_jdbc_datasource_xml(xml_text, source_file)
+    if not values.get("connectString") or not values.get("username"):
+        return values, "oimOperationsDB datasource was found, but JDBC URL or schema user could not be parsed."
+    return values, ""
+
+
+def collect_oim_product_information(target, database, password, oracle_home="", domain_home="", progress=None):
+    datasource_database, datasource_error = read_oim_operations_datasource(target, domain_home, progress=progress)
+    database = normalize_oaa_database_details(dict(database or {}, **(datasource_database or {})))
     missing = oaa_database_missing_fields(database)
     if missing:
-        return {"configured": False, "error": "Missing OIM database details: {0}.".format(", ".join(missing))}
+        return {"configured": False, "error": datasource_error or "Missing OIM datasource details from oimOperationsDB*.xml: {0}.".format(", ".join(missing))}
     username = str(database.get("username") or database.get("schema") or "").strip()
     db_password = str(password or "").strip()
     if not db_password:
@@ -6191,6 +6269,7 @@ def collect_oim_product_information(target, database, password, oracle_home="", 
         "configured": True,
         "databaseUser": username,
         "connectTarget": "{0}:{1}/{2}".format(database.get("host") or "-", database.get("port") or "1521", database.get("service") or database.get("name") or "-"),
+        "datasourceFile": database.get("sourceFile") or "",
         "summary": parsed.get("summary") or {},
         "sections": parsed.get("sections") or {},
         "errors": parsed.get("errors") or [],
@@ -8724,6 +8803,7 @@ def get_oig_metrics(target, environment, app_checks, weblogic_metrics=None, opat
         oig.get("database") or {},
         oig.get("databasePassword") or "",
         oracle_home=oracle_home,
+        domain_home=domain_home,
         progress=progress,
     )
 
