@@ -5999,7 +5999,7 @@ def collect_oaa_schema_table_metrics(target, database, password, progress=None, 
     }
 
 
-def build_oim_product_info_jdbc_command(jdbc_url, username, password, oracle_home_hint=""):
+def build_oim_product_info_jdbc_command(jdbc_url, username, password, oracle_home_hint="", domain_home_hint=""):
     java_source = r"""
 import java.sql.*;
 
@@ -6042,6 +6042,11 @@ public class IamOimProductInfo {
         return column.length() == 0 ? "'-'" : "to_char(" + column + ")";
     }
 
+    static String statusExpr(String table, String... candidates) throws Exception {
+        String column = pickColumn(table, candidates);
+        return column.length() == 0 ? "0" : "sum(case when lower(to_char(" + column + ")) in ('1','true','y','yes','locked','disabled','deleted') then 1 else 0 end)";
+    }
+
     static String clean(Object value) {
         String text = String.valueOf(value == null ? "-" : value);
         return text.replace('|', ' ').replace('\n', ' ').replace('\r', ' ').trim();
@@ -6058,6 +6063,31 @@ public class IamOimProductInfo {
         } catch (Exception exc) {
             System.out.println("COUNT|" + key + "|" + label + "|-|" + clean(exc.getMessage()));
         }
+    }
+
+    static void countWhere(String key, String label, String table, String whereClause) throws Exception {
+        if (table.length() == 0 || whereClause.length() == 0) {
+            System.out.println("COUNT|" + key + "|" + label + "|-|Column not found");
+            return;
+        }
+        try (Statement st = connection.createStatement(); ResultSet rs = st.executeQuery("select count(*) from " + table + " where " + whereClause)) {
+            rs.next();
+            System.out.println("COUNT|" + key + "|" + label + "|" + rs.getLong(1) + "|OK");
+        } catch (Exception exc) {
+            System.out.println("COUNT|" + key + "|" + label + "|-|" + clean(exc.getMessage()));
+        }
+    }
+
+    static String statusWhere(String table, String[] columns, String[] values) throws Exception {
+        String column = pickColumn(table, columns);
+        if (column.length() == 0) return "";
+        StringBuilder where = new StringBuilder("lower(to_char(").append(column).append(")) in (");
+        for (int i = 0; i < values.length; i++) {
+            if (i > 0) where.append(",");
+            where.append("'").append(values[i].toLowerCase()).append("'");
+        }
+        where.append(")");
+        return where.toString();
     }
 
     static void sample(String section, String table, String[] headers, String[] expressions) throws Exception {
@@ -6091,12 +6121,15 @@ public class IamOimProductInfo {
             String users = findTable("USR");
             String roles = findTable("UGP");
             String orgs = findTable("ACT", "ORC");
-            String applications = findTable("APP_INSTANCE", "OIM_APP_INSTANCE");
+            String applications = findTable("APP_INST", "APP_INSTANCE", "OIM_APP_INSTANCE");
             String resources = findTable("OBJ");
             String policies = findTable("POL");
             String connectors = findTable("SVR", "IT_RESOURCE");
             String passwordPolicies = findTable("PCQ", "PWD_POLICY", "PASSWORD_POLICY");
             countTable("users", "Users", users);
+            countWhere("lockedUsers", "Locked Users", users, statusWhere(users, new String[]{"USR_LOCKED", "USR_LOCKED_FLAG", "USR_LOCK"}, new String[]{"1", "true", "y", "yes", "locked"}));
+            countWhere("disabledUsers", "Disabled Users", users, statusWhere(users, new String[]{"USR_DISABLED", "USR_DISABLED_FLAG", "USR_STATUS"}, new String[]{"1", "true", "y", "yes", "disabled", "disable"}));
+            countWhere("deletedUsers", "Deleted Users", users, statusWhere(users, new String[]{"USR_DELETED", "USR_DELETE", "USR_STATUS"}, new String[]{"1", "true", "y", "yes", "deleted", "delete"}));
             countTable("roles", "Roles", roles);
             countTable("organizations", "Organizations", orgs);
             countTable("applications", "Application Instances", applications);
@@ -6104,11 +6137,11 @@ public class IamOimProductInfo {
             countTable("accessPolicies", "Access Policies", policies);
             countTable("connectors", "IT Resources / Connectors", connectors);
             countTable("passwordPolicies", "Password Policies", passwordPolicies);
-            sample("applications", applications, new String[]{"Name", "Display Name", "Resource Object"}, new String[]{expr(applications, "APP_INSTANCE_NAME", "NAME"), expr(applications, "DISPLAY_NAME", "APP_INSTANCE_DISPLAY_NAME"), expr(applications, "OBJ_NAME", "RESOURCE_OBJECT_NAME")});
+            sample("applications", applications, new String[]{"Name", "Display Name", "Version", "Resource Object", "Status"}, new String[]{expr(applications, "APP_INSTANCE_NAME", "APP_INST_NAME", "NAME"), expr(applications, "DISPLAY_NAME", "APP_INSTANCE_DISPLAY_NAME", "APP_INST_DISPLAY_NAME"), expr(applications, "APP_INSTANCE_VERSION", "APP_INST_VERSION", "VERSION", "APP_VERSION"), expr(applications, "OBJ_NAME", "RESOURCE_OBJECT_NAME"), expr(applications, "STATUS", "APP_INSTANCE_STATUS", "APP_INST_STATUS")});
             sample("resources", resources, new String[]{"Name", "Description", "Type"}, new String[]{expr(resources, "OBJ_NAME", "NAME"), expr(resources, "OBJ_DESC", "DESCRIPTION"), expr(resources, "OBJ_TYPE", "TYPE")});
             sample("accessPolicies", policies, new String[]{"Name", "Description", "Priority"}, new String[]{expr(policies, "POL_NAME", "NAME"), expr(policies, "POL_DESC", "DESCRIPTION"), expr(policies, "POL_PRIORITY", "PRIORITY")});
-            sample("passwordPolicies", passwordPolicies, new String[]{"Policy Name", "Description", "Minimum Length", "Expires After Days"}, new String[]{expr(passwordPolicies, "PCQ_NAME", "POLICY_NAME", "NAME"), expr(passwordPolicies, "PCQ_DESC", "DESCRIPTION"), expr(passwordPolicies, "MIN_LENGTH", "MINIMUM_LENGTH", "PCQ_MIN_LENGTH"), expr(passwordPolicies, "EXPIRES_AFTER", "MAX_PASSWORD_AGE", "PCQ_MAX_AGE")});
-            sample("connectors", connectors, new String[]{"Name", "Type", "Host"}, new String[]{expr(connectors, "SVR_NAME", "NAME"), expr(connectors, "SVR_TYPE", "TYPE"), expr(connectors, "SVR_HOST", "HOST")});
+            sample("passwordPolicies", passwordPolicies, new String[]{"Policy Name", "Description", "Minimum Length", "Expires After Days", "Warn After Days"}, new String[]{expr(passwordPolicies, "PCQ_NAME", "POLICY_NAME", "NAME"), expr(passwordPolicies, "PCQ_DESC", "DESCRIPTION"), expr(passwordPolicies, "MIN_LENGTH", "MINIMUM_LENGTH", "PCQ_MIN_LENGTH"), expr(passwordPolicies, "EXPIRES_AFTER", "MAX_PASSWORD_AGE", "PCQ_MAX_AGE"), expr(passwordPolicies, "WARN_AFTER", "PASSWORD_WARNING_DAYS", "PCQ_WARN_AFTER")});
+            sample("connectors", connectors, new String[]{"Name", "Type", "Version", "Host"}, new String[]{expr(connectors, "SVR_NAME", "NAME"), expr(connectors, "SVR_TYPE", "TYPE"), expr(connectors, "SVR_VERSION", "CONNECTOR_VERSION", "VERSION"), expr(connectors, "SVR_HOST", "HOST")});
         }
     }
 }
@@ -6117,8 +6150,10 @@ public class IamOimProductInfo {
     template = (
         "set +e\n"
         "export ORACLE_HOME=__ORACLE_HOME_HINT__\n"
-        "find_java_bin() { for candidate in \"$JAVA_HOME/bin/java\" \"$ORACLE_HOME/jdk/bin/java\" \"$ORACLE_HOME/jdk/jre/bin/java\" /usr/java*/bin/java /usr/lib/jvm/*/bin/java; do [ -x \"$candidate\" ] && { printf '%s\\n' \"$candidate\"; return 0; }; done; command -v java 2>/dev/null; }\n"
-        "find_javac_bin() { java_bin=\"$1\"; java_dir=$(dirname \"$java_bin\" 2>/dev/null); for candidate in \"$java_dir/javac\" \"$JAVA_HOME/bin/javac\" \"$ORACLE_HOME/jdk/bin/javac\" /usr/java*/bin/javac /usr/lib/jvm/*/bin/javac; do [ -x \"$candidate\" ] && { printf '%s\\n' \"$candidate\"; return 0; }; done; command -v javac 2>/dev/null; }\n"
+        "export DOMAIN_HOME=__DOMAIN_HOME_HINT__\n"
+        "if [ -f \"$DOMAIN_HOME/bin/setDomainEnv.sh\" ]; then . \"$DOMAIN_HOME/bin/setDomainEnv.sh\" >/dev/null 2>&1; fi\n"
+        "find_java_bin() { for candidate in \"$JAVA_HOME/bin/java\" \"$ORACLE_HOME/jdk/bin/java\" \"$ORACLE_HOME/oracle_common/jdk/bin/java\" \"$ORACLE_HOME/jdk/jre/bin/java\" \"$MW_HOME/oracle_common/jdk/bin/java\" \"$MW_HOME/jdk/bin/java\" /usr/java*/bin/java /usr/lib/jvm/*/bin/java; do [ -x \"$candidate\" ] && { printf '%s\\n' \"$candidate\"; return 0; }; done; command -v java 2>/dev/null; }\n"
+        "find_javac_bin() { java_bin=\"$1\"; java_dir=$(dirname \"$java_bin\" 2>/dev/null); for candidate in \"$java_dir/javac\" \"$JAVA_HOME/bin/javac\" \"$ORACLE_HOME/jdk/bin/javac\" \"$ORACLE_HOME/oracle_common/jdk/bin/javac\" \"$MW_HOME/oracle_common/jdk/bin/javac\" \"$MW_HOME/jdk/bin/javac\" /usr/java*/bin/javac /usr/lib/jvm/*/bin/javac; do [ -x \"$candidate\" ] && { printf '%s\\n' \"$candidate\"; return 0; }; done; command -v javac 2>/dev/null; }\n"
         "find_ojdbc_jar() { for candidate in \"$ORACLE_HOME/oracle_common/modules/oracle.jdbc/ojdbc\"*.jar \"$ORACLE_HOME/oracle_common/modules/\"*/ojdbc*.jar \"$ORACLE_HOME/wlserver/server/lib/ojdbc\"*.jar \"$ORACLE_HOME/jdbc/lib/ojdbc\"*.jar \"$ORACLE_HOME/lib/ojdbc\"*.jar; do [ -f \"$candidate\" ] && { printf '%s\\n' \"$candidate\"; return 0; }; done; find /opt/oracle /u01 /refresh/home /home -name 'ojdbc*.jar' -type f -print -quit 2>/dev/null; }\n"
         "java_bin=$(find_java_bin | head -1)\n"
         "if [ -z \"$java_bin\" ]; then echo \"Java runtime was not found for OIM schema query.\"; exit 127; fi\n"
@@ -6132,11 +6167,12 @@ public class IamOimProductInfo {
         "IAM_MONITORING_JAVA\n"
         "javac_bin=$(find_javac_bin \"$java_bin\" | head -1)\n"
         "if [ -n \"$javac_bin\" ]; then \"$javac_bin\" -cp \"$ojdbc_jar\" -d \"$classdir\" \"$src\" && \"$java_bin\" -cp \"$ojdbc_jar:$classdir\" IamOimProductInfo __JDBC_ARGS__; exit $?; fi\n"
-        "\"$java_bin\" -cp \"$ojdbc_jar\" \"$src\" __JDBC_ARGS__\n"
+        "echo \"javac was not found for OIM schema query. Checked JAVA_HOME, ORACLE_HOME, MW_HOME, and common JVM paths after setDomainEnv.sh.\"; exit 127\n"
     )
     return (
         template
         .replace("__ORACLE_HOME_HINT__", shlex.quote(str(oracle_home_hint or "").strip()))
+        .replace("__DOMAIN_HOME_HINT__", shlex.quote(str(domain_home_hint or "").strip()))
         .replace("__JAVA_SOURCE__", java_source)
         .replace("__JDBC_ARGS__", " ".join(shlex.quote(str(value)) for value in jdbc_args))
     )
@@ -6262,7 +6298,7 @@ def collect_oim_product_information(target, database, password, oracle_home="", 
     if callable(progress):
         progress("Collecting OIM product information from the configured OIM schema.")
     jdbc_url = oaa_jdbc_url_from_connect_string(connect_string)
-    command = build_oim_product_info_jdbc_command(jdbc_url, username, db_password, oracle_home)
+    command = build_oim_product_info_jdbc_command(jdbc_url, username, db_password, oracle_home, domain_home)
     result = run_target(target, command, timeout=180)
     parsed = parse_oim_product_info_output(result.get("output"))
     return {
