@@ -6155,10 +6155,14 @@ public class IamOimProductInfo {
         "find_java_bin() { for candidate in \"$JAVA_HOME/bin/java\" \"$ORACLE_HOME/jdk/bin/java\" \"$ORACLE_HOME/oracle_common/jdk/bin/java\" \"$ORACLE_HOME/jdk/jre/bin/java\" \"$MW_HOME/oracle_common/jdk/bin/java\" \"$MW_HOME/jdk/bin/java\" /usr/java*/bin/java /usr/lib/jvm/*/bin/java; do [ -x \"$candidate\" ] && { printf '%s\\n' \"$candidate\"; return 0; }; done; command -v java 2>/dev/null; }\n"
         "find_javac_bin() { java_bin=\"$1\"; java_dir=$(dirname \"$java_bin\" 2>/dev/null); for candidate in \"$java_dir/javac\" \"$JAVA_HOME/bin/javac\" \"$ORACLE_HOME/jdk/bin/javac\" \"$ORACLE_HOME/oracle_common/jdk/bin/javac\" \"$MW_HOME/oracle_common/jdk/bin/javac\" \"$MW_HOME/jdk/bin/javac\" /usr/java*/bin/javac /usr/lib/jvm/*/bin/javac; do [ -x \"$candidate\" ] && { printf '%s\\n' \"$candidate\"; return 0; }; done; command -v javac 2>/dev/null; }\n"
         "find_ojdbc_jar() { for candidate in \"$ORACLE_HOME/oracle_common/modules/oracle.jdbc/ojdbc\"*.jar \"$ORACLE_HOME/oracle_common/modules/\"*/ojdbc*.jar \"$ORACLE_HOME/wlserver/server/lib/ojdbc\"*.jar \"$ORACLE_HOME/jdbc/lib/ojdbc\"*.jar \"$ORACLE_HOME/lib/ojdbc\"*.jar; do [ -f \"$candidate\" ] && { printf '%s\\n' \"$candidate\"; return 0; }; done; find /opt/oracle /u01 /refresh/home /home -name 'ojdbc*.jar' -type f -print -quit 2>/dev/null; }\n"
+        "find_dms_jar() { for candidate in \"$ORACLE_HOME/oracle_common/modules/oracle.dms/\"*.jar \"$ORACLE_HOME/oracle_common/modules/\"*/oracle.dms*.jar \"$ORACLE_HOME/oracle_common/modules/\"*/dms*.jar \"$ORACLE_HOME/modules/\"*/oracle.dms*.jar \"$MW_HOME/oracle_common/modules/oracle.dms/\"*.jar \"$MW_HOME/oracle_common/modules/\"*/oracle.dms*.jar \"$MW_HOME/oracle_common/modules/\"*/dms*.jar; do [ -f \"$candidate\" ] && { printf '%s\\n' \"$candidate\"; return 0; }; done; find \"$ORACLE_HOME\" \"$MW_HOME\" /opt/oracle /u01 /refresh/home -name '*dms*.jar' -type f -print -quit 2>/dev/null; }\n"
         "java_bin=$(find_java_bin | head -1)\n"
         "if [ -z \"$java_bin\" ]; then echo \"Java runtime was not found for OIM schema query.\"; exit 127; fi\n"
         "ojdbc_jar=$(find_ojdbc_jar | head -1)\n"
         "if [ -z \"$ojdbc_jar\" ]; then echo \"Oracle JDBC driver ojdbc*.jar was not found for OIM schema query.\"; exit 127; fi\n"
+        "dms_jar=$(find_dms_jar | head -1)\n"
+        "jdbc_cp=\"$ojdbc_jar\"\n"
+        "if [ -n \"$dms_jar\" ]; then jdbc_cp=\"$ojdbc_jar:$dms_jar\"; fi\n"
         "classdir=$(mktemp -d /tmp/iam-oim-jdbc.XXXXXX)\n"
         "src=\"$classdir/IamOimProductInfo.java\"\n"
         "trap 'rm -rf \"$classdir\"' EXIT\n"
@@ -6166,7 +6170,7 @@ public class IamOimProductInfo {
         "__JAVA_SOURCE__"
         "IAM_MONITORING_JAVA\n"
         "javac_bin=$(find_javac_bin \"$java_bin\" | head -1)\n"
-        "if [ -n \"$javac_bin\" ]; then \"$javac_bin\" -cp \"$ojdbc_jar\" -d \"$classdir\" \"$src\" && \"$java_bin\" -cp \"$ojdbc_jar:$classdir\" IamOimProductInfo __JDBC_ARGS__; exit $?; fi\n"
+        "if [ -n \"$javac_bin\" ]; then \"$javac_bin\" -cp \"$jdbc_cp\" -d \"$classdir\" \"$src\" && \"$java_bin\" -Doracle.jdbc.DMS=false -Doracle.jdbc.dms=false -cp \"$jdbc_cp:$classdir\" IamOimProductInfo __JDBC_ARGS__; exit $?; fi\n"
         "echo \"javac was not found for OIM schema query. Checked JAVA_HOME, ORACLE_HOME, MW_HOME, and common JVM paths after setDomainEnv.sh.\"; exit 127\n"
     )
     return (
