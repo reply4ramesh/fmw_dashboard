@@ -6209,6 +6209,136 @@ def parse_oim_product_info_output(text):
     return {"summary": summary, "sections": sections, "errors": errors}
 
 
+def oim_product_info_sql_text():
+    return r"""
+set heading off feedback off verify off echo off pagesize 0 linesize 32767 trimspool on serveroutput on size unlimited
+whenever sqlerror exit sql.sqlcode
+declare
+  function table_name(p_a varchar2, p_b varchar2 default null, p_c varchar2 default null) return varchar2 is
+    l_name varchar2(128);
+  begin
+    for r in (
+      select column_value name from table(sys.odcivarchar2list(upper(p_a), upper(p_b), upper(p_c)))
+      where column_value is not null
+    ) loop
+      begin
+        select table_name into l_name from user_tables where table_name = r.name and rownum = 1;
+        return l_name;
+      exception when no_data_found then null;
+      end;
+    end loop;
+    return '';
+  end;
+  function col_name(p_table varchar2, p_a varchar2, p_b varchar2 default null, p_c varchar2 default null, p_d varchar2 default null) return varchar2 is
+    l_name varchar2(128);
+  begin
+    if p_table is null then return ''; end if;
+    for r in (
+      select column_value name from table(sys.odcivarchar2list(upper(p_a), upper(p_b), upper(p_c), upper(p_d)))
+      where column_value is not null
+    ) loop
+      begin
+        select column_name into l_name from user_tab_columns where table_name = upper(p_table) and column_name = r.name and rownum = 1;
+        return l_name;
+      exception when no_data_found then null;
+      end;
+    end loop;
+    return '';
+  end;
+  function expr(p_table varchar2, p_a varchar2, p_b varchar2 default null, p_c varchar2 default null, p_d varchar2 default null) return varchar2 is
+    l_col varchar2(128);
+  begin
+    l_col := col_name(p_table, p_a, p_b, p_c, p_d);
+    if l_col is null or l_col = '' then return '''-'''; end if;
+    return 'to_char(' || l_col || ')';
+  end;
+  function status_where(p_table varchar2, p_a varchar2, p_b varchar2, p_c varchar2, p_values varchar2) return varchar2 is
+    l_col varchar2(128);
+  begin
+    l_col := col_name(p_table, p_a, p_b, p_c);
+    if l_col is null or l_col = '' then return ''; end if;
+    return 'lower(to_char(' || l_col || ')) in (' || p_values || ')';
+  end;
+  procedure count_table(p_key varchar2, p_label varchar2, p_table varchar2) is
+    l_count number;
+  begin
+    if p_table is null or p_table = '' then
+      dbms_output.put_line('COUNT|' || p_key || '|' || p_label || '|-|Table not found');
+      return;
+    end if;
+    execute immediate 'select count(*) from ' || p_table into l_count;
+    dbms_output.put_line('COUNT|' || p_key || '|' || p_label || '|' || l_count || '|OK');
+  exception when others then
+    dbms_output.put_line('COUNT|' || p_key || '|' || p_label || '|-|' || replace(sqlerrm, '|', ' '));
+  end;
+  procedure count_where(p_key varchar2, p_label varchar2, p_table varchar2, p_where varchar2) is
+    l_count number;
+  begin
+    if p_table is null or p_table = '' or p_where is null or p_where = '' then
+      dbms_output.put_line('COUNT|' || p_key || '|' || p_label || '|-|Column not found');
+      return;
+    end if;
+    execute immediate 'select count(*) from ' || p_table || ' where ' || p_where into l_count;
+    dbms_output.put_line('COUNT|' || p_key || '|' || p_label || '|' || l_count || '|OK');
+  exception when others then
+    dbms_output.put_line('COUNT|' || p_key || '|' || p_label || '|-|' || replace(sqlerrm, '|', ' '));
+  end;
+  procedure sample_rows(p_section varchar2, p_table varchar2, p_headers varchar2, p_e1 varchar2, p_e2 varchar2, p_e3 varchar2, p_e4 varchar2, p_e5 varchar2) is
+    l_sql varchar2(32767);
+    l_rc sys_refcursor;
+    v1 varchar2(4000); v2 varchar2(4000); v3 varchar2(4000); v4 varchar2(4000); v5 varchar2(4000);
+  begin
+    if p_table is null or p_table = '' then return; end if;
+    l_sql := 'select ' || p_e1 || ', ' || p_e2 || ', ' || p_e3 || ', ' || p_e4 || ', ' || p_e5 || ' from ' || p_table || ' where rownum <= 25';
+    open l_rc for l_sql;
+    loop
+      fetch l_rc into v1, v2, v3, v4, v5;
+      exit when l_rc%notfound;
+      dbms_output.put_line('ROW|' || p_section || '|' || p_headers || '|::|' || replace(nvl(v1,'-'),'|',' ') || '|' || replace(nvl(v2,'-'),'|',' ') || '|' || replace(nvl(v3,'-'),'|',' ') || '|' || replace(nvl(v4,'-'),'|',' ') || '|' || replace(nvl(v5,'-'),'|',' '));
+    end loop;
+    close l_rc;
+  exception when others then
+    dbms_output.put_line('ERROR|' || p_section || '|' || replace(sqlerrm, '|', ' '));
+  end;
+  l_users varchar2(128);
+  l_roles varchar2(128);
+  l_orgs varchar2(128);
+  l_apps varchar2(128);
+  l_resources varchar2(128);
+  l_policies varchar2(128);
+  l_connectors varchar2(128);
+  l_password_policies varchar2(128);
+begin
+  l_users := table_name('USR');
+  l_roles := table_name('UGP');
+  l_orgs := table_name('ACT', 'ORC');
+  l_apps := table_name('APP_INST', 'APP_INSTANCE', 'OIM_APP_INSTANCE');
+  l_resources := table_name('OBJ');
+  l_policies := table_name('POL');
+  l_connectors := table_name('SVR', 'IT_RESOURCE');
+  l_password_policies := table_name('PCQ', 'PWD_POLICY', 'PASSWORD_POLICY');
+  count_table('users', 'Users', l_users);
+  count_where('lockedUsers', 'Locked Users', l_users, status_where(l_users, 'USR_LOCKED', 'USR_LOCKED_FLAG', 'USR_LOCK', '''1'',''true'',''y'',''yes'',''locked'''));
+  count_where('disabledUsers', 'Disabled Users', l_users, status_where(l_users, 'USR_DISABLED', 'USR_DISABLED_FLAG', 'USR_STATUS', '''1'',''true'',''y'',''yes'',''disabled'',''disable'''));
+  count_where('deletedUsers', 'Deleted Users', l_users, status_where(l_users, 'USR_DELETED', 'USR_DELETE', 'USR_STATUS', '''1'',''true'',''y'',''yes'',''deleted'',''delete'''));
+  count_table('roles', 'Roles', l_roles);
+  count_table('organizations', 'Organizations', l_orgs);
+  count_table('applications', 'Application Instances', l_apps);
+  count_table('resources', 'Resource Objects', l_resources);
+  count_table('accessPolicies', 'Access Policies', l_policies);
+  count_table('connectors', 'IT Resources / Connectors', l_connectors);
+  count_table('passwordPolicies', 'Password Policies', l_password_policies);
+  sample_rows('applications', l_apps, 'Name|Display Name|Version|Resource Object|Status', expr(l_apps,'APP_INSTANCE_NAME','APP_INST_NAME','NAME'), expr(l_apps,'DISPLAY_NAME','APP_INSTANCE_DISPLAY_NAME','APP_INST_DISPLAY_NAME'), expr(l_apps,'APP_INSTANCE_VERSION','APP_INST_VERSION','VERSION','APP_VERSION'), expr(l_apps,'OBJ_NAME','RESOURCE_OBJECT_NAME'), expr(l_apps,'STATUS','APP_INSTANCE_STATUS','APP_INST_STATUS'));
+  sample_rows('resources', l_resources, 'Name|Description|Type|Status|Key', expr(l_resources,'OBJ_NAME','NAME'), expr(l_resources,'OBJ_DESC','DESCRIPTION'), expr(l_resources,'OBJ_TYPE','TYPE'), expr(l_resources,'OBJ_STATUS','STATUS'), expr(l_resources,'OBJ_KEY','KEY'));
+  sample_rows('accessPolicies', l_policies, 'Name|Description|Priority|Status|Key', expr(l_policies,'POL_NAME','NAME'), expr(l_policies,'POL_DESC','DESCRIPTION'), expr(l_policies,'POL_PRIORITY','PRIORITY'), expr(l_policies,'POL_STATUS','STATUS'), expr(l_policies,'POL_KEY','KEY'));
+  sample_rows('passwordPolicies', l_password_policies, 'Policy Name|Description|Minimum Length|Expires After Days|Warn After Days', expr(l_password_policies,'PCQ_NAME','POLICY_NAME','NAME'), expr(l_password_policies,'PCQ_DESC','DESCRIPTION'), expr(l_password_policies,'MIN_LENGTH','MINIMUM_LENGTH','PCQ_MIN_LENGTH'), expr(l_password_policies,'EXPIRES_AFTER','MAX_PASSWORD_AGE','PCQ_MAX_AGE'), expr(l_password_policies,'WARN_AFTER','PASSWORD_WARNING_DAYS','PCQ_WARN_AFTER'));
+  sample_rows('connectors', l_connectors, 'Name|Type|Version|Host|Key', expr(l_connectors,'SVR_NAME','NAME'), expr(l_connectors,'SVR_TYPE','TYPE'), expr(l_connectors,'SVR_VERSION','CONNECTOR_VERSION','VERSION'), expr(l_connectors,'SVR_HOST','HOST'), expr(l_connectors,'SVR_KEY','KEY'));
+end;
+/
+exit
+"""
+
+
 def parse_oim_jdbc_datasource_xml(text, source_file=""):
     values = {}
     try:
@@ -6301,10 +6431,30 @@ def collect_oim_product_information(target, database, password, oracle_home="", 
         return {"configured": False, "error": "Missing OIM database connect string."}
     if callable(progress):
         progress("Collecting OIM product information from the configured OIM schema.")
+    sql_text = oim_product_info_sql_text()
+    sql_arg = "{0}/{1}@{2}".format(username, db_password, connect_string)
+    sqlplus_command = build_oaa_schema_host_sqlplus_command(sql_arg, sql_text, oracle_home)
+    sqlplus_result = run_target(target, sqlplus_command, timeout=180)
+    if sqlplus_result.get("exit_code") == 0:
+        parsed = parse_oim_product_info_output(sqlplus_result.get("output"))
+        return {
+            "configured": True,
+            "databaseUser": username,
+            "connectTarget": "{0}:{1}/{2}".format(database.get("host") or "-", database.get("port") or "1521", database.get("service") or database.get("name") or "-"),
+            "datasourceFile": database.get("sourceFile") or "",
+            "summary": parsed.get("summary") or {},
+            "sections": parsed.get("sections") or {},
+            "errors": parsed.get("errors") or [],
+            "error": "; ".join(parsed.get("errors") or []),
+            "command": "OIM product information query via SQL*Plus as {0}. SQL text and password hidden by dashboard.".format(username),
+        }
     jdbc_url = oaa_jdbc_url_from_connect_string(connect_string)
     command = build_oim_product_info_jdbc_command(jdbc_url, username, db_password, oracle_home, domain_home)
     result = run_target(target, command, timeout=180)
     parsed = parse_oim_product_info_output(result.get("output"))
+    error_text = "" if result.get("exit_code") == 0 else str(result.get("output") or "OIM schema query failed.").strip()
+    if error_text and sqlplus_result.get("output"):
+        error_text = "SQL*Plus attempt failed: {0}; JDBC fallback failed: {1}".format(str(sqlplus_result.get("output") or "").strip().splitlines()[-1], error_text)
     return {
         "configured": True,
         "databaseUser": username,
@@ -6313,8 +6463,8 @@ def collect_oim_product_information(target, database, password, oracle_home="", 
         "summary": parsed.get("summary") or {},
         "sections": parsed.get("sections") or {},
         "errors": parsed.get("errors") or [],
-        "error": "" if result.get("exit_code") == 0 else str(result.get("output") or "OIM schema query failed.").strip(),
-        "command": "OIM product information query via JDBC Thin as {0}. SQL text and password hidden by dashboard.".format(username),
+        "error": error_text,
+        "command": "OIM product information query via JDBC Thin as {0}. SQL text and password hidden by dashboard. SQL*Plus was tried first.".format(username),
     }
 
 
