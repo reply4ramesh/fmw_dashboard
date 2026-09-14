@@ -5715,6 +5715,20 @@ def build_oaa_schema_host_sqlplus_command(sql_arg, sql_text, oracle_home_hint=""
     )
 
 
+def sqlplus_quoted_connect_value(value):
+    text = str(value or "").replace("\r", " ").replace("\n", " ").strip()
+    return '"' + text.replace('"', '""') + '"'
+
+
+def build_host_sqlplus_nolog_command(username, password, connect_string, sql_text, oracle_home_hint=""):
+    connect_line = "connect {0}/{1}@{2}\n".format(
+        sqlplus_quoted_connect_value(username),
+        sqlplus_quoted_connect_value(password),
+        str(connect_string or "").replace("\r", " ").replace("\n", " ").strip(),
+    )
+    return build_oaa_schema_host_sqlplus_command("/nolog", connect_line + sql_text, oracle_home_hint)
+
+
 def oaa_jdbc_url_from_connect_string(connect_string):
     text = str(connect_string or "").strip()
     if not text:
@@ -6453,8 +6467,7 @@ def collect_oim_product_information(target, database, password, oracle_home="", 
     if callable(progress):
         progress("Collecting OIM product information from the configured OIM schema.")
     sql_text = oim_product_info_sql_text()
-    sql_arg = "{0}/{1}@{2}".format(username, db_password, connect_string)
-    sqlplus_command = build_oaa_schema_host_sqlplus_command(sql_arg, sql_text, oracle_home)
+    sqlplus_command = build_host_sqlplus_nolog_command(username, db_password, connect_string, sql_text, oracle_home)
     sqlplus_result = run_target(target, sqlplus_command, timeout=180)
     if sqlplus_result.get("exit_code") == 0:
         parsed = parse_oim_product_info_output(sqlplus_result.get("output"))
