@@ -1,6 +1,6 @@
 {
   "catalogVersion": "2026.08",
-  "sourceNote": "Oracle KM KA754 baseline bundled with the dashboard. Updated for the August 2026 SPB/BP release.",
+  "sourceNote": "Oracle KM KA754 baseline bundled with the dashboard. Updated for the September 2026 SPB/CSPU release.",
   "families": {
     "12c": {
       "family": "12c",
@@ -49,7 +49,7 @@
     "14c": {
       "family": "14c",
       "version": "14.1.2.1",
-      "latestRelease": "August 2026 14.1.2.1.2608 SPB",
+      "latestRelease": "September 2026 14.1.2.1.2609 SPB/CSPU",
       "latestPatch": {
         "description": "MERGE REQUEST ON TOP OF 14.1.2.0.0 FOR BUGS 39458344 39301239",
         "patchId": "39726399",
@@ -61,27 +61,27 @@
         {"description": "OINAV PATCH 14.1.2.0.260421", "patchId": "39019346", "applicability": ["OAM", "OIG"]},
         {"description": "IPF PATCH 14.1.2.1.260818", "patchId": "39810320", "applicability": ["OAM", "OIG"]},
         {"description": "PATCHING OF LIB_IDM_OAM_THIRDPARTY.JAR FOR UPDATING THIRD PARTY LIBRARY", "patchId": "38181053", "applicability": ["OAM", "OIG"]},
-        {"description": "FMWCONTROL BUNDLE PATCH 14.1.2.0.260603", "patchId": "39490634", "applicability": ["OAM", "OIG", "OUD", "OID"]},
         {"description": "PERL SECURITY PATCH UPDATE 14.1.2.0.260120", "patchId": "38590500", "applicability": ["OAM", "OIG", "OID"]},
-        {"description": "FMW THIRDPARTY BUNDLE PATCH 14.1.2.0.260720", "patchId": "39759983", "applicability": ["OAM", "OIG", "OUD", "OID"]},
-        {"description": "Coherence 14.1.2.0 Cumulative Patch 8 (14.1.2.0.8)", "patchId": "39562773", "applicability": ["OAM", "OIG", "OUD", "OID"]},
-        {"description": "WEBLOGIC SAMPLES PATCH 14.1.2.0.250715", "patchId": "38063775", "applicability": ["OAM", "OIG", "OUD", "OID"]},
-        {"description": "WLS PATCH SET UPDATE 14.1.2.0.260728", "patchId": "39796630", "applicability": ["OAM", "OIG", "OUD", "OID"]},
+        {"description": "JDBC23.26.2 BUNDLE PATCH 14.1.2.0.260603", "patchId": "39487373", "applicability": ["OAM", "OIG", "OUD", "OID"]},
         {"description": "DATABASE RELEASE UPDATE 23.26.2.0.0 FOR FMW DBCLIENT", "patchId": "39264447", "applicability": ["OAM", "OIG", "OID"]},
         {"description": "STACK:FMW:RCU prereq steps fails while trying to validate the DB connection", "patchId": "38391376", "applicability": ["OAM", "OIG", "OUD", "OID"]},
-        {"description": "JDBC23.26.2 BUNDLE PATCH 14.1.2.0.260603", "patchId": "39487373", "applicability": ["OAM", "OIG", "OUD", "OID"]},
-        {"description": "RDA release 26.3.2026721 for FMW 14.1.2.0.0", "patchId": "39246777", "applicability": ["OAM", "OIG", "OUD", "OID"]},
-        {"description": "OWSM BUNDLE PATCH 14.1.2.0.260707", "patchId": "39695026", "applicability": ["OAM", "OIG", "OUD", "OID"]},
-        {"description": "OAM BUNDLE PATCH 14.1.2.1.260727", "patchId": "39790420", "applicability": ["OAM", "OIG"]},
-        {"description": "OIM BUNDLE PATCH 14.1.2.1.260726", "patchId": "39787336", "applicability": ["OAM", "OIG"]},
-        {"description": "SOA Bundle Patch 14.1.2.0.260723", "patchId": "39777936", "applicability": ["OIG"]},
+        {"description": "RDA release 26.3.2026915 for FMW 14.1.2.0.0", "patchId": "39798193", "applicability": ["OAM", "OIG", "OUD", "OID"]},
+        {"description": "FMW Thirdparty Bundle Patch 14.1.2.0.260821", "patchId": "39916998", "applicability": ["OAM", "OIG", "OUD", "OID"]},
+        {"description": "WLS PATCH SET UPDATE 14.1.2.0.260823", "patchId": "39919611", "applicability": ["OAM", "OIG", "OUD", "OID"]},
+        {"description": "WEBLOGIC SAMPLES PATCH 14.1.2.0.250715", "patchId": "38063775", "applicability": ["OAM", "OIG", "OUD", "OID"]},
+        {"description": "Coherence 14.1.2.0 Cumulative Patch 9 (14.1.2.0.9)", "patchId": "39864483", "applicability": ["OAM", "OIG", "OUD", "OID"]},
+        {"description": "OWSM BUNDLE PATCH 14.1.2.0.260818", "patchId": "39895617", "applicability": ["OAM", "OIG", "OUD", "OID"]},
+        {"description": "OAM BUNDLE PATCH 14.1.2.1.260820", "patchId": "39908881", "applicability": ["OAM", "OIG"]},
+        {"description": "OIM BUNDLE PATCH 14.1.2.1.260819", "patchId": "39904932", "applicability": ["OAM", "OIG"]},
+        {"description": "SOA Bundle Patch 14.1.2.0.260820", "patchId": "39913274", "applicability": ["OIG"]},
         {"description": "OUD BUNDLE PATCH 14.1.2.1.260721 - AUG BP", "patchId": "39761325", "applicability": ["OUD"]},
-        {"description": "ADF BUNDLE PATCH 14.1.2.0.260721", "patchId": "39765053", "applicability": ["OAM", "OIG", "OUD", "OID"]},
-        {"description": "WebCenter Core Bundle Patch 14.1.2.0.260715", "patchId": "39746717", "applicability": ["OAM", "OIG", "OUD", "OID"]},
-        {"description": "UMS Bundle Patch 14.1.2.0.260723", "patchId": "39773748", "applicability": ["OAM", "OIG", "OUD", "OID"]},
-        {"description": "OPSS BUNDLE PATCH 14.1.2.0.260629", "patchId": "39658778", "applicability": ["OAM", "OIG", "OUD", "OID"]},
-        {"description": "FMWCONTROL BUNDLE PATCH 14.1.2.0.260603", "patchId": "39490634", "applicability": ["OAM", "OIG", "OUD", "OID"]},
-        {"description": "OID BUNDLE PATCH 14.1.2.1.0(ID:260624.2055)", "patchId": "39622554", "applicability": ["OID"]}
+        {"description": "ADF BUNDLE PATCH 14.1.2.0.260817", "patchId": "39889965", "applicability": ["OAM", "OIG", "OUD", "OID"]},
+        {"description": "WebCenter Core Bundle Patch 14.1.2.0.260818", "patchId": "39901669", "applicability": ["OAM", "OIG", "OUD", "OID"]},
+        {"description": "UMS Bundle Patch 14.1.2.0.260827", "patchId": "39940047", "applicability": ["OAM", "OIG", "OUD", "OID"]},
+        {"description": "OPSS Bundle Patch 14.1.2.0.260904", "patchId": "39979746", "applicability": ["OAM", "OIG", "OUD", "OID"]},
+        {"description": "FMWCONTROL BUNDLE PATCH 14.1.2.0.260723", "patchId": "39777647", "applicability": ["OAM", "OIG", "OUD", "OID"]},
+        {"description": "OID BUNDLE PATCH 14.1.2.1.0(ID:260814.2147)", "patchId": "39884090", "applicability": ["OID"]},
+        {"description": "OAMCLIENT BUNDLE PATCH 14.1.2.0.260817", "patchId": "39894980", "applicability": ["OAM", "OIG"]}
       ]
     }
   }
