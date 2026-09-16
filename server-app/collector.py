@@ -6245,7 +6245,18 @@ def parse_oim_product_info_output(text):
             headers = parts[2:marker]
             values = parts[marker + 1:]
             sections.setdefault(section, {"headers": headers, "rows": []})
+            if not sections[section].get("headers"):
+                sections[section]["headers"] = headers
             sections[section]["rows"].append(dict(zip(headers, values)))
+        elif parts[0] == "SECTION" and len(parts) >= 4:
+            section = parts[1]
+            try:
+                row_count = int(parts[2])
+            except (TypeError, ValueError):
+                row_count = None
+            sections.setdefault(section, {"headers": [], "rows": []})
+            sections[section]["rowCount"] = row_count
+            sections[section]["tableName"] = parts[3]
         elif parts[0] == "ERROR" and len(parts) >= 3:
             errors.append("{0}: {1}".format(parts[1], parts[2]))
     return {"summary": summary, "sections": sections, "errors": errors}
@@ -6257,7 +6268,7 @@ def sanitize_oim_product_info_output(text):
         line = raw_line.strip()
         if not line:
             continue
-        if line.startswith("COUNT|") or line.startswith("ROW|"):
+        if line.startswith("COUNT|") or line.startswith("ROW|") or line.startswith("SECTION|"):
             continue
         lines.append(line)
         if len(lines) >= 8:
@@ -6274,6 +6285,7 @@ declare
   l_roles varchar2(128);
   l_orgs varchar2(128);
   l_apps varchar2(128);
+  l_app_templates varchar2(128);
   l_resources varchar2(128);
   l_policies varchar2(128);
   l_connectors varchar2(128);
@@ -6347,13 +6359,40 @@ declare
   exception when others then
     dbms_output.put_line('COUNT|' || p_key || '|' || p_label || '|-|' || replace(sqlerrm, '|', ' '));
   end;
+  procedure section_info(p_section varchar2, p_table varchar2) is
+    l_count number;
+  begin
+    if p_table is null or p_table = '' then
+      dbms_output.put_line('SECTION|' || p_section || '|-|-');
+      return;
+    end if;
+    execute immediate 'select count(*) from ' || p_table into l_count;
+    dbms_output.put_line('SECTION|' || p_section || '|' || l_count || '|' || p_table);
+  exception when others then
+    dbms_output.put_line('SECTION|' || p_section || '|-|' || nvl(p_table, '-'));
+    dbms_output.put_line('ERROR|' || p_section || '|' || replace(sqlerrm, '|', ' '));
+  end;
+  procedure table_count_row(p_table_key varchar2, p_area varchar2, p_purpose varchar2) is
+    l_table varchar2(128);
+    l_count number;
+  begin
+    l_table := table_name(p_table_key);
+    if l_table is null or l_table = '' then
+      dbms_output.put_line('ROW|schemaTables|Table|Rows|Area|Purpose|Status|::|' || upper(p_table_key) || '|-|' || replace(p_area, '|', ' ') || '|' || replace(p_purpose, '|', ' ') || '|Table not found');
+      return;
+    end if;
+    execute immediate 'select count(*) from ' || l_table into l_count;
+    dbms_output.put_line('ROW|schemaTables|Table|Rows|Area|Purpose|Status|::|' || l_table || '|' || l_count || '|' || replace(p_area, '|', ' ') || '|' || replace(p_purpose, '|', ' ') || '|OK');
+  exception when others then
+    dbms_output.put_line('ROW|schemaTables|Table|Rows|Area|Purpose|Status|::|' || upper(p_table_key) || '|-|' || replace(p_area, '|', ' ') || '|' || replace(p_purpose, '|', ' ') || '|' || replace(sqlerrm, '|', ' '));
+  end;
   procedure sample_rows(p_section varchar2, p_table varchar2, p_headers varchar2, p_e1 varchar2, p_e2 varchar2, p_e3 varchar2, p_e4 varchar2, p_e5 varchar2) is
     l_sql varchar2(32767);
     l_rc sys_refcursor;
     v1 varchar2(4000); v2 varchar2(4000); v3 varchar2(4000); v4 varchar2(4000); v5 varchar2(4000);
   begin
     if p_table is null or p_table = '' then return; end if;
-    l_sql := 'select ' || p_e1 || ', ' || p_e2 || ', ' || p_e3 || ', ' || p_e4 || ', ' || p_e5 || ' from ' || p_table || ' where rownum <= 25';
+    l_sql := 'select ' || p_e1 || ', ' || p_e2 || ', ' || p_e3 || ', ' || p_e4 || ', ' || p_e5 || ' from ' || p_table || ' where rownum <= 100';
     open l_rc for l_sql;
     loop
       fetch l_rc into v1, v2, v3, v4, v5;
@@ -6364,11 +6403,29 @@ declare
   exception when others then
     dbms_output.put_line('ERROR|' || p_section || '|' || replace(sqlerrm, '|', ' '));
   end;
+  procedure sample_rows7(p_section varchar2, p_table varchar2, p_headers varchar2, p_e1 varchar2, p_e2 varchar2, p_e3 varchar2, p_e4 varchar2, p_e5 varchar2, p_e6 varchar2, p_e7 varchar2) is
+    l_sql varchar2(32767);
+    l_rc sys_refcursor;
+    v1 varchar2(4000); v2 varchar2(4000); v3 varchar2(4000); v4 varchar2(4000); v5 varchar2(4000); v6 varchar2(4000); v7 varchar2(4000);
+  begin
+    if p_table is null or p_table = '' then return; end if;
+    l_sql := 'select ' || p_e1 || ', ' || p_e2 || ', ' || p_e3 || ', ' || p_e4 || ', ' || p_e5 || ', ' || p_e6 || ', ' || p_e7 || ' from ' || p_table || ' where rownum <= 100';
+    open l_rc for l_sql;
+    loop
+      fetch l_rc into v1, v2, v3, v4, v5, v6, v7;
+      exit when l_rc%notfound;
+      dbms_output.put_line('ROW|' || p_section || '|' || p_headers || '|::|' || replace(nvl(v1,'-'),'|',' ') || '|' || replace(nvl(v2,'-'),'|',' ') || '|' || replace(nvl(v3,'-'),'|',' ') || '|' || replace(nvl(v4,'-'),'|',' ') || '|' || replace(nvl(v5,'-'),'|',' ') || '|' || replace(nvl(v6,'-'),'|',' ') || '|' || replace(nvl(v7,'-'),'|',' '));
+    end loop;
+    close l_rc;
+  exception when others then
+    dbms_output.put_line('ERROR|' || p_section || '|' || replace(sqlerrm, '|', ' '));
+  end;
 begin
   l_users := table_name('USR');
   l_roles := table_name('UGP');
   l_orgs := table_name('ACT', 'ORC');
   l_apps := table_name('APP_INST', 'APP_INSTANCE', 'OIM_APP_INSTANCE');
+  l_app_templates := table_name('APP_TEMPLATE');
   l_resources := table_name('OBJ');
   l_policies := table_name('POL');
   l_connectors := table_name('SVR', 'IT_RESOURCE');
@@ -6380,14 +6437,44 @@ begin
   count_table('roles', 'Roles', l_roles);
   count_table('organizations', 'Organizations', l_orgs);
   count_table('applications', 'Application Instances', l_apps);
+  count_table('appTemplates', 'Application Templates', l_app_templates);
   count_table('resources', 'Resource Objects', l_resources);
   count_table('accessPolicies', 'Access Policies', l_policies);
   count_table('connectors', 'IT Resources / Connectors', l_connectors);
   count_table('passwordPolicies', 'Password Policies', l_password_policies);
-  sample_rows('applications', l_apps, 'Name|Display Name|Version|Resource Object|Status', expr(l_apps,'APP_INSTANCE_NAME','APP_INST_NAME','NAME'), expr(l_apps,'DISPLAY_NAME','APP_INSTANCE_DISPLAY_NAME','APP_INST_DISPLAY_NAME'), expr(l_apps,'APP_INSTANCE_VERSION','APP_INST_VERSION','VERSION','APP_VERSION'), expr(l_apps,'OBJ_NAME','RESOURCE_OBJECT_NAME'), expr(l_apps,'STATUS','APP_INSTANCE_STATUS','APP_INST_STATUS'));
+  table_count_row('USR', 'Users', 'Core user information table');
+  table_count_row('USG', 'Membership', 'User group membership');
+  table_count_row('UGP', 'Groups and roles', 'User groups and role definitions');
+  table_count_row('RUL', 'Rules', 'Membership and policy rules');
+  table_count_row('OIU', 'Provisioning', 'User resource instances');
+  table_count_row('OBI', 'Provisioning', 'Resource instance details');
+  table_count_row('OST', 'Provisioning', 'Resource status tracking');
+  table_count_row('OBJ', 'Provisioning', 'Resource object definitions');
+  table_count_row('ORC', 'Lifecycle', 'Resource lifecycle and orchestration');
+  table_count_row('PKG', 'Lifecycle', 'Provisioning process packages');
+  table_count_row('TOS', 'Lifecycle', 'Task or process object status');
+  table_count_row('STA', 'Lifecycle', 'Status definitions');
+  table_count_row('OSI', 'Lifecycle', 'Orchestration status instances');
+  table_count_row('SCH', 'Lifecycle', 'Scheduler and lifecycle records');
+  table_count_row('MIL', 'Lifecycle', 'Lifecycle milestone records');
+  table_count_row('AUD_JMS', 'Audit', 'Audit JMS staging records');
+  table_count_row('UPA_USR', 'Audit', 'User profile history');
+  table_count_row('UPA_USR_FIELDS', 'Audit', 'Changed user profile fields');
+  table_count_row('UPA_RESOURCE', 'Audit', 'User resource profile history');
+  table_count_row('UPA_UD_FORMFIELDS', 'Audit', 'Account and entitlement form history');
+  table_count_row('APP_INSTANCE', 'Applications', 'Application instance definitions');
+  table_count_row('APP_TEMPLATE', 'Applications', 'Application templates and connector metadata');
+  section_info('applications', l_apps);
+  sample_rows7('applications', l_apps, 'Key|IT Resource Key|Object Key|Name|Display Name|Type|Soft Deleted', expr(l_apps,'APP_INSTANCE_KEY','APP_INST_KEY','KEY'), expr(l_apps,'ITRESOURCE_KEY','IT_RESOURCE_KEY','SVR_KEY'), expr(l_apps,'OBJECT_KEY','OBJ_KEY'), expr(l_apps,'APP_INSTANCE_NAME','APP_INST_NAME','NAME'), expr(l_apps,'APP_INSTANCE_DISPLAY_NAME','DISPLAY_NAME','APP_INST_DISPLAY_NAME'), expr(l_apps,'APP_INSTANCE_TYPE','TYPE'), expr(l_apps,'APP_INSTANCE_IS_SOFT_DELETE','IS_SOFT_DELETE','SOFT_DELETE'));
+  section_info('appTemplates', l_app_templates);
+  sample_rows('appTemplates', l_app_templates, 'Name|Description|Connector Name|Connector Version|Disconnected', expr(l_app_templates,'APP_TEMPLATE_NAME','TEMPLATE_NAME','NAME'), expr(l_app_templates,'DESCRIPTION','APP_TEMPLATE_DESCRIPTION','APP_TEMPLATE_DESC'), expr(l_app_templates,'CONNECTOR_NAME'), expr(l_app_templates,'CONNECTOR_VERSION','VERSION'), expr(l_app_templates,'DISCONNECTED','IS_DISCONNECTED','APP_TEMPLATE_DISCONNECTED'));
+  section_info('resources', l_resources);
   sample_rows('resources', l_resources, 'Name|Description|Type|Status|Key', expr(l_resources,'OBJ_NAME','NAME'), expr(l_resources,'OBJ_DESC','DESCRIPTION'), expr(l_resources,'OBJ_TYPE','TYPE'), expr(l_resources,'OBJ_STATUS','STATUS'), expr(l_resources,'OBJ_KEY','KEY'));
+  section_info('accessPolicies', l_policies);
   sample_rows('accessPolicies', l_policies, 'Name|Description|Priority|Status|Key', expr(l_policies,'POL_NAME','NAME'), expr(l_policies,'POL_DESC','DESCRIPTION'), expr(l_policies,'POL_PRIORITY','PRIORITY'), expr(l_policies,'POL_STATUS','STATUS'), expr(l_policies,'POL_KEY','KEY'));
+  section_info('passwordPolicies', l_password_policies);
   sample_rows('passwordPolicies', l_password_policies, 'Policy Name|Description|Minimum Length|Expires After Days|Warn After Days', expr(l_password_policies,'PCQ_NAME','POLICY_NAME','NAME'), expr(l_password_policies,'PCQ_DESC','DESCRIPTION'), expr(l_password_policies,'MIN_LENGTH','MINIMUM_LENGTH','PCQ_MIN_LENGTH'), expr(l_password_policies,'EXPIRES_AFTER','MAX_PASSWORD_AGE','PCQ_MAX_AGE'), expr(l_password_policies,'WARN_AFTER','PASSWORD_WARNING_DAYS','PCQ_WARN_AFTER'));
+  section_info('connectors', l_connectors);
   sample_rows('connectors', l_connectors, 'Name|Type|Version|Host|Key', expr(l_connectors,'SVR_NAME','NAME'), expr(l_connectors,'SVR_TYPE','TYPE'), expr(l_connectors,'SVR_VERSION','CONNECTOR_VERSION','VERSION'), expr(l_connectors,'SVR_HOST','HOST'), expr(l_connectors,'SVR_KEY','KEY'));
 end;
 /
