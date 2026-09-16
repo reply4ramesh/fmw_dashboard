@@ -1,14 +1,14 @@
 {
-  "catalogVersion": "2026.08",
-  "sourceNote": "Oracle KM KA754 baseline bundled with the dashboard. Updated for the September 2026 SPB/CSPU release.",
+  "catalogVersion": "2026.09",
+  "sourceNote": "Oracle KM KA754 baseline bundled with the dashboard. Updated for the September 2026 SPB release.",
   "families": {
     "12c": {
       "family": "12c",
       "version": "12.2.1.4.0",
-      "latestRelease": "August 2026 12.2.1.4.2608 SPB",
+      "latestRelease": "September 2026 12.2.1.4.260908 SPB",
       "latestPatch": {
-        "description": "MERGE REQUEST ON TOP OF 12.2.1.4.0 FOR BUGS 39465265 39301239",
-        "patchId": "39726402",
+        "description": "IDM STACK PATCH BUNDLE 12.2.1.4.260908",
+        "patchId": "39990616",
         "applicability": ["OAM", "OIG", "OUD", "OID"]
       },
       "patches": [
@@ -21,38 +21,37 @@
         {"description": "MERGE REQUEST ON TOP OF 12.2.1.4.0 FOR BUGS 20623024 29790738", "patchId": "31676526", "applicability": ["OAM", "OIG"]},
         {"description": "OAS 12.2.1.4.5 - RCU CREATION WITH RAC DB SHOWS INCORRECT PORT WARNING", "patchId": "30540494", "applicability": ["OAM", "OIG"]},
         {"description": "IPF PATCH 12.2.1.4.260818", "patchId": "39810314", "applicability": ["OAM", "OIG"]},
-        {"description": "LIBDMS2 SECURITY PATCH UPDATE 12.2.1.4.260120", "patchId": "38098858", "applicability": ["OID"]},
-        {"description": "LIBIAU SECURITY PATCH UPDATE 12.2.1.4.260120", "patchId": "38832179", "applicability": ["OID"]},
-        {"description": "RDA release 26.3.2026721 for FMW 12.2.1.4.0", "patchId": "39246821", "applicability": ["OAM", "OIG", "OUD", "OID"]},
+        {"description": "RDA release 26.3.2026915 for FMW 12.2.1.4.0", "patchId": "39798204", "applicability": ["OAM", "OIG", "OUD", "OID"]},
         {"description": "FMW THIRDPARTY BUNDLE PATCH 12.2.1.4.260617", "patchId": "39574504", "applicability": ["OAM", "OIG", "OUD", "OID"]},
         {"description": "WEBLOGIC SAMPLES SPU 12.2.1.4.240416", "patchId": "36426672", "applicability": ["OAM", "OIG", "OUD", "OID"]},
         {"description": "OSS 19C BUNDLE PATCH 12.2.1.4.260616", "patchId": "39567777", "applicability": ["OAM", "OIG", "OUD", "OID"]},
         {"description": "JDBC19.31 BUNDLE PATCH 12.2.1.4.260603", "patchId": "39487427", "applicability": ["OAM", "OIG", "OUD", "OID"]},
         {"description": "FMW PLATFORM BUNDLE PATCH 12.2.1.4.240812", "patchId": "36789759", "applicability": ["OAM", "OIG", "OUD", "OID"]},
-        {"description": "WLS PATCH SET UPDATE 12.2.1.4.260728", "patchId": "39796340", "applicability": ["OAM", "OIG", "OUD", "OID"]},
         {"description": "ADR FOR WEBLOGIC SERVER 12.2.1.4.0 - SIZE OPTIMIZED FOR JAN 2024", "patchId": "35965629", "applicability": ["OAM", "OIG", "OUD", "OID"]},
         {"description": "OCT 2024 CLONING SPU FOR FMW 12.2.1.4.0", "patchId": "37056593", "applicability": ["OAM", "OIG", "OUD", "OID"]},
-        {"description": "Coherence 12.2.1.4 Cumulative Patch 31 (12.2.1.4.31)", "patchId": "39562796", "applicability": ["OAM", "OIG", "OUD", "OID"]},
-        {"description": "OPSS BUNDLE PATCH 12.2.1.4.260629", "patchId": "39659274", "applicability": ["OAM", "OIG", "OUD", "OID"]},
-        {"description": "OWSM BUNDLE PATCH 12.2.1.4.260707", "patchId": "39697343", "applicability": ["OAM", "OIG", "OUD", "OID"]},
-        {"description": "OIM BUNDLE PATCH 12.2.1.4.260728", "patchId": "39795152", "applicability": ["OAM", "OIG"]},
+        {"description": "Coherence 12.2.1.4 Cumulative Patch 32 (12.2.1.4.32)", "patchId": "39864526", "applicability": ["OAM", "OIG", "OUD", "OID"]},
+        {"description": "WLS PATCH SET UPDATE 12.2.1.4.260823", "patchId": "39919567", "applicability": ["OAM", "OIG", "OUD", "OID"]},
+        {"description": "OPSS Bundle Patch 12.2.1.4.260904", "patchId": "39979941", "applicability": ["OAM", "OIG", "OUD", "OID"]},
+        {"description": "OWSM BUNDLE PATCH 12.2.1.4.260818", "patchId": "39896168", "applicability": ["OAM", "OIG", "OUD", "OID"]},
+        {"description": "OIM BUNDLE PATCH 12.2.1.4.260818", "patchId": "39895193", "applicability": ["OAM", "OIG"]},
         {"description": "OUD BUNDLE PATCH 12.2.1.4.260721 - AUG BP", "patchId": "39761493", "applicability": ["OUD"]},
-        {"description": "ADF BUNDLE PATCH 12.2.1.4.260721", "patchId": "39765141", "applicability": ["OAM", "OIG", "OUD", "OID"]},
-        {"description": "SOA Bundle Patch 12.2.1.4.260722", "patchId": "39772773", "applicability": ["OIG"]},
-        {"description": "WebCenter Core Bundle Patch 12.2.1.4.260724", "patchId": "39785701", "applicability": ["OAM", "OIG", "OUD", "OID"]},
-        {"description": "OAM BUNDLE PATCH 12.2.1.4.260727", "patchId": "39790440", "applicability": ["OAM", "OIG"]},
-        {"description": "FMWCONTROL BUNDLE PATCH 12.2.1.4.260603", "patchId": "39491156", "applicability": ["OAM", "OIG", "OUD", "OID"]},
-        {"description": "UMS (On Prem) Bundle Patch 12.2.1.3.260722", "patchId": "39771909", "applicability": ["OAM", "OIG", "OUD", "OID"]},
-        {"description": "OID BUNDLE PATCH 12.2.1.4.260622", "patchId": "39598590", "applicability": ["OID"]}
+        {"description": "ADF BUNDLE PATCH 12.2.1.4.260825", "patchId": "39930279", "applicability": ["OAM", "OIG", "OUD", "OID"]},
+        {"description": "SOA Bundle Patch 12.2.1.4.260825", "patchId": "39928046", "applicability": ["OIG"]},
+        {"description": "WebCenter Core Bundle Patch 12.2.1.4.260818", "patchId": "39901894", "applicability": ["OAM", "OIG", "OUD", "OID"]},
+        {"description": "OAM BUNDLE PATCH 12.2.1.4.260821", "patchId": "39912438", "applicability": ["OAM", "OIG"]},
+        {"description": "OAMCLIENT BUNDLE PATCH 12.2.1.4.260819", "patchId": "39913319", "applicability": ["OAM", "OIG"]},
+        {"description": "FMWCONTROL Bundle Patch 12.2.1.4.260803", "patchId": "39825967", "applicability": ["OAM", "OIG", "OUD", "OID"]},
+        {"description": "UMS (On Prem) Bundle Patch 12.2.1.3.260827", "patchId": "39939504", "applicability": ["OAM", "OIG", "OUD", "OID"]},
+        {"description": "OID BUNDLE PATCH 12.2.1.4.260814", "patchId": "39882405", "applicability": ["OID"]}
       ]
     },
     "14c": {
       "family": "14c",
       "version": "14.1.2.1",
-      "latestRelease": "September 2026 14.1.2.1.2609 SPB/CSPU",
+      "latestRelease": "September 2026 14.1.2.1.260906 SPB",
       "latestPatch": {
-        "description": "MERGE REQUEST ON TOP OF 14.1.2.0.0 FOR BUGS 39458344 39301239",
-        "patchId": "39726399",
+        "description": "IDM STACK PATCH BUNDLE 14.1.2.1.260906",
+        "patchId": "39983554",
         "applicability": ["OAM", "OIG", "OUD", "OID"]
       },
       "patches": [
