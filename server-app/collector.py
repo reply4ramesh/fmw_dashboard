@@ -6251,11 +6251,33 @@ def parse_oim_product_info_output(text):
     return {"summary": summary, "sections": sections, "errors": errors}
 
 
+def sanitize_oim_product_info_output(text):
+    lines = []
+    for raw_line in str(text or "").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.startswith("COUNT|") or line.startswith("ROW|"):
+            continue
+        lines.append(line)
+        if len(lines) >= 8:
+            break
+    return "; ".join(lines)
+
+
 def oim_product_info_sql_text():
     return r"""
 set heading off feedback off verify off echo off pagesize 0 linesize 32767 trimspool on serveroutput on size unlimited
 whenever sqlerror exit sql.sqlcode
 declare
+  l_users varchar2(128);
+  l_roles varchar2(128);
+  l_orgs varchar2(128);
+  l_apps varchar2(128);
+  l_resources varchar2(128);
+  l_policies varchar2(128);
+  l_connectors varchar2(128);
+  l_password_policies varchar2(128);
   function table_name(p_a varchar2, p_b varchar2 default null, p_c varchar2 default null) return varchar2 is
     l_name varchar2(128);
   begin
@@ -6342,14 +6364,6 @@ declare
   exception when others then
     dbms_output.put_line('ERROR|' || p_section || '|' || replace(sqlerrm, '|', ' '));
   end;
-  l_users varchar2(128);
-  l_roles varchar2(128);
-  l_orgs varchar2(128);
-  l_apps varchar2(128);
-  l_resources varchar2(128);
-  l_policies varchar2(128);
-  l_connectors varchar2(128);
-  l_password_policies varchar2(128);
 begin
   l_users := table_name('USR');
   l_roles := table_name('UGP');
@@ -6413,7 +6427,12 @@ def parse_oim_jdbc_datasource_xml(text, source_file=""):
     jdbc_url = str(values.get("connectString") or "")
     simple = re.search(r"jdbc:oracle:thin:@//([^:/\s]+):(\d+)/([^\s<]+)", jdbc_url, re.I)
     if simple:
-        values.update({"host": simple.group(1), "port": simple.group(2), "service": simple.group(3)})
+        values.update({
+            "host": simple.group(1),
+            "port": simple.group(2),
+            "service": simple.group(3),
+            "connectString": "//{0}:{1}/{2}".format(simple.group(1), simple.group(2), simple.group(3)),
+        })
     elif jdbc_url.lower().startswith("jdbc:oracle:thin:@"):
         descriptor = jdbc_url.split("@", 1)[1]
         values["connectString"] = descriptor
@@ -6446,10 +6465,11 @@ def read_oim_operations_datasource(target, domain_home, progress=None):
     output = str(result.get("output") or "")
     source_file = ""
     xml_text = output
-    if output.startswith("IAM_MONITORING_OIM_DS_FILE="):
-        lines = output.splitlines()
-        source_file = lines[0].split("=", 1)[1].strip()
-        xml_text = "\n".join(lines[1:])
+    lines = output.splitlines()
+    marker_index = next((idx for idx, line in enumerate(lines) if line.startswith("IAM_MONITORING_OIM_DS_FILE=")), None)
+    if marker_index is not None:
+        source_file = lines[marker_index].split("=", 1)[1].strip()
+        xml_text = "\n".join(lines[marker_index + 1:])
     if result.get("exit_code") != 0:
         return {}, output.strip() or "OIM datasource collection failed."
     values = parse_oim_jdbc_datasource_xml(xml_text, source_file)
@@ -6478,24 +6498,27 @@ def collect_oim_product_information(target, database, password, oracle_home="", 
     sqlplus_result = run_target(target, sqlplus_command, timeout=180)
     if sqlplus_result.get("exit_code") == 0:
         parsed = parse_oim_product_info_output(sqlplus_result.get("output"))
-        return {
-            "configured": True,
-            "databaseUser": username,
-            "connectTarget": "{0}:{1}/{2}".format(database.get("host") or "-", database.get("port") or "1521", database.get("service") or database.get("name") or "-"),
-            "datasourceFile": database.get("sourceFile") or "",
-            "summary": parsed.get("summary") or {},
-            "sections": parsed.get("sections") or {},
-            "errors": parsed.get("errors") or [],
-            "error": "; ".join(parsed.get("errors") or []),
-            "command": "OIM product information query via SQL*Plus as {0}. SQL text and password hidden by dashboard.".format(username),
-        }
+        if parsed.get("summary") or parsed.get("sections") or parsed.get("errors"):
+            return {
+                "configured": True,
+                "databaseUser": username,
+                "connectTarget": "{0}:{1}/{2}".format(database.get("host") or "-", database.get("port") or "1521", database.get("service") or database.get("name") or "-"),
+                "datasourceFile": database.get("sourceFile") or "",
+                "summary": parsed.get("summary") or {},
+                "sections": parsed.get("sections") or {},
+                "errors": parsed.get("errors") or [],
+                "error": "; ".join(parsed.get("errors") or []),
+                "command": "OIM product information query via SQL*Plus as {0}. SQL text and password hidden by dashboard.".format(username),
+            }
     jdbc_url = oaa_jdbc_url_from_connect_string(connect_string)
     command = build_oim_product_info_jdbc_command(jdbc_url, username, db_password, oracle_home, domain_home)
     result = run_target(target, command, timeout=180)
     parsed = parse_oim_product_info_output(result.get("output"))
     error_text = "" if result.get("exit_code") == 0 else str(result.get("output") or "OIM schema query failed.").strip()
-    if error_text and sqlplus_result.get("output"):
-        error_text = "SQL*Plus attempt failed: {0}; JDBC fallback failed: {1}".format(str(sqlplus_result.get("output") or "").strip().splitlines()[-1], error_text)
+    sqlplus_output = str(sqlplus_result.get("output") or "").strip()
+    if error_text and sqlplus_output:
+        output_hint = sanitize_oim_product_info_output(sqlplus_output) or sqlplus_output.splitlines()[-1]
+        error_text = "SQL*Plus attempt did not return OIM rows: {0}; JDBC fallback failed: {1}".format(output_hint, error_text)
     return {
         "configured": True,
         "databaseUser": username,
