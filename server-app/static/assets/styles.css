@@ -1477,6 +1477,19 @@ tbody tr:last-child td {
     font-size: 0.94rem;
 }
 
+.oim-resource-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+    gap: 16px;
+    margin-top: 14px;
+}
+
+.oim-resource-grid .subsection-block {
+    min-width: 0;
+    margin-top: 0;
+}
+
 .metric-disclosure {
     margin-top: 10px;
     border: 1px solid var(--border);
@@ -5442,6 +5455,10 @@ tbody tr:last-child td {
 
     .field-span-2 {
         grid-column: auto;
+    }
+
+    .oim-resource-grid {
+        grid-template-columns: 1fr;
     }
 }
 
