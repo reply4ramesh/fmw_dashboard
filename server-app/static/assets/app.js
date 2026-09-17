@@ -1271,6 +1271,11 @@ return{group:"product",label:"Product / Component"};
 }
 patchRecommendationLabel=function(item){const status=String((item||{}).recommendationStatus||"").toLowerCase();const text=String((item||{}).recommendation||"").trim();if(status==="latest")return text&&text!=="Latest"?text:"Latest";if(status==="missing")return(item||{}).isMissingRecommendation?"Install required":text?`Install: ${text}`:"Install recommended patch";if(status==="recommended")return text&&text!=="-"?`Update to: ${text}`:"Update recommended";return text||"-";};
 function opatchCategoryRowOrderV123(item){const status=String((item||{}).recommendationStatus||"none").toLowerCase();return{missing:0,recommended:1,latest:2,none:3}[status]??4;}
+function deduplicateOpatchRecommendationRowsV153(rows){
+const items=coerceList(rows);
+const represented=new Set(items.filter(function(item){return String(item.patchId||"").trim()&&String(item.recommendationStatus||"").toLowerCase()==="recommended";}).map(function(item){return String(item.recommendation||"").trim();}).filter(Boolean));
+return items.filter(function(item){const synthetic=String(item.recommendationStatus||"").toLowerCase()==="missing"&&!String(item.patchId||"").trim()&&String(item.description||"").trim().toLowerCase()==="not installed";return!synthetic||!represented.has(String(item.recommendation||"").trim());});
+}
 function renderOpatchCategoryTableV123(rows){
 const ordered=coerceList(rows).slice().sort(function(left,right){return opatchCategoryRowOrderV123(left)-opatchCategoryRowOrderV123(right);});
 return`<div class="table-wrap"><table><thead><tr><th>Patch</th><th>Description</th><th>Classification</th><th>Applied On</th><th>Recommended</th></tr></thead><tbody>${ordered.map(function(item){const classification=opatchPatchClassificationV123(item);return`<tr class="patch-row ${escapeHtml(opatchPatchRowClass(item))} is-${escapeHtml(classification.group)}"><td>${escapeHtml(item.patchId||"-")}</td><td>${escapeHtml(item.description||"-")}</td><td><span class="patch-classification-badge is-${escapeHtml(classification.group)}">${escapeHtml(classification.label)}</span></td><td>${escapeHtml(item.appliedOn||"-")}</td><td>${patchRecommendationCell(item)}</td></tr>`;}).join("")}</tbody></table></div>`;
@@ -1286,7 +1291,7 @@ const products=coerceList(inventory.products);
 const patches=coerceList(inventory.patches);
 const recommendation=inventory.recommendation||{};
 const comparisonRows=coerceList(inventory.patchComparisonRows).length?coerceList(inventory.patchComparisonRows):coerceList(recommendation.comparisonRows);
-const rows=comparisonRows.length?comparisonRows:patches.map(function(item){const row=Object.assign({},item);row.recommendation="-";row.recommendationStatus="none";return row;});
+const rows=deduplicateOpatchRecommendationRowsV153(comparisonRows.length?comparisonRows:patches.map(function(item){const row=Object.assign({},item);row.recommendation="-";row.recommendationStatus="none";return row;}));
 const securityRows=rows.filter(function(item){return opatchPatchClassificationV123(item).group==="security";});
 const productPatchRows=rows.filter(function(item){return opatchPatchClassificationV123(item).group!=="security";});
 const versionItems=versions.map(function(item){return{key:item.key||"Version",value:item.value||"-"};});

@@ -2246,6 +2246,16 @@ def patch_item_numbers(item):
 
 def patch_category(description):
     text = str(description or "").upper()
+    if "RDA" in text or "REMOTE DIAGNOSTIC AGENT" in text:
+        return "RDA"
+    if "PATCHING OF LIB_IDM_OAM_THIRDPARTY" in text:
+        return "OAM THIRDPARTY"
+    if "OAMCLIENT" in text:
+        return "OAMCLIENT"
+    if "UMS " in text or text.startswith("UMS"):
+        return "UMS"
+    if "IPF PATCH" in text:
+        return "IPF"
     if "STACK PATCH BUNDLE" in text or " SPB" in text:
         return "SPB"
     if "COHERENCE" in text:
@@ -2284,8 +2294,6 @@ def patch_category(description):
         return "OSS"
     if "OINAV" in text:
         return "OINAV"
-    if "RDA" in text:
-        return "RDA"
     if "FMW PLATFORM" in text:
         return "FMW PLATFORM"
     if "CLONING" in text:
@@ -2445,9 +2453,12 @@ def build_fmw_patch_recommendation(opatch, environment, oracle_home, components=
         }
     matched_required = set()
     comparison_rows = []
+    represented_recommendations = set()
     by_category = {}
     for item in required:
-        by_category.setdefault(patch_category(item.get("description")), item)
+        category = patch_category(item.get("description"))
+        if category:
+            by_category[category] = item
 
     for patch in patches:
         matched_item = next((item for item in required if patch_matches_baseline(patch, item)), None)
@@ -2459,6 +2470,8 @@ def build_fmw_patch_recommendation(opatch, environment, oracle_home, components=
             same_category = by_category.get(patch_category(patch.get("description")))
             recommendation = recommendation_text(same_category) if same_category else "-"
             recommendation_status = "recommended" if same_category else "none"
+            if same_category:
+                represented_recommendations.add(recommendation)
         row = dict(patch)
         row["recommendation"] = recommendation
         row["recommendationStatus"] = recommendation_status
@@ -2471,13 +2484,15 @@ def build_fmw_patch_recommendation(opatch, environment, oracle_home, components=
         row = dict(item)
         row["components"] = [component for component in item.get("applicability") or [] if component in components]
         missing.append(row)
-        comparison_rows.append({
-            "patchId": "",
-            "description": "Not installed",
-            "appliedOn": "",
-            "recommendation": recommendation_text(row),
-            "recommendationStatus": "missing",
-        })
+        missing_recommendation = recommendation_text(row)
+        if missing_recommendation not in represented_recommendations:
+            comparison_rows.append({
+                "patchId": "",
+                "description": "Not installed",
+                "appliedOn": "",
+                "recommendation": missing_recommendation,
+                "recommendationStatus": "missing",
+            })
 
     status = "updates_recommended" if missing else "latest"
     message = (
