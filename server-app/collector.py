@@ -6167,7 +6167,6 @@ public class IamOimProductInfo {
             String resources = findTable("OBJ");
             String policies = findTable("POL");
             String connectors = findTable("SVR", "IT_RESOURCE");
-            String passwordPolicies = findTable("PCQ", "PWD_POLICY", "PASSWORD_POLICY");
             countTable("users", "Users", users);
             countWhere("lockedUsers", "Locked Users", users, statusWhere(users, new String[]{"USR_LOCKED", "USR_LOCKED_FLAG", "USR_LOCK"}, new String[]{"1", "true", "y", "yes", "locked"}));
             countWhere("disabledUsers", "Disabled Users", users, statusWhere(users, new String[]{"USR_DISABLED", "USR_DISABLED_FLAG", "USR_STATUS"}, new String[]{"1", "true", "y", "yes", "disabled", "disable"}));
@@ -6178,12 +6177,10 @@ public class IamOimProductInfo {
             countTable("resources", "Resource Objects", resources);
             countTable("accessPolicies", "Access Policies", policies);
             countTable("connectors", "IT Resources / Connectors", connectors);
-            countTable("passwordPolicies", "Password Policies", passwordPolicies);
             sample("applications", applications, new String[]{"Name", "Display Name", "Version", "Resource Object", "Status"}, new String[]{expr(applications, "APP_INSTANCE_NAME", "APP_INST_NAME", "NAME"), expr(applications, "DISPLAY_NAME", "APP_INSTANCE_DISPLAY_NAME", "APP_INST_DISPLAY_NAME"), expr(applications, "APP_INSTANCE_VERSION", "APP_INST_VERSION", "VERSION", "APP_VERSION"), expr(applications, "OBJ_NAME", "RESOURCE_OBJECT_NAME"), expr(applications, "STATUS", "APP_INSTANCE_STATUS", "APP_INST_STATUS")});
-            sample("resources", resources, new String[]{"Name", "Description", "Type"}, new String[]{expr(resources, "OBJ_NAME", "NAME"), expr(resources, "OBJ_DESC", "DESCRIPTION"), expr(resources, "OBJ_TYPE", "TYPE")});
+            sample("resources", resources, new String[]{"Name"}, new String[]{expr(resources, "OBJ_NAME", "NAME")});
             sample("accessPolicies", policies, new String[]{"Name", "Description", "Priority"}, new String[]{expr(policies, "POL_NAME", "NAME"), expr(policies, "POL_DESC", "DESCRIPTION"), expr(policies, "POL_PRIORITY", "PRIORITY")});
-            sample("passwordPolicies", passwordPolicies, new String[]{"Policy Name", "Description", "Minimum Length", "Expires After Days", "Warn After Days"}, new String[]{expr(passwordPolicies, "PCQ_NAME", "POLICY_NAME", "NAME"), expr(passwordPolicies, "PCQ_DESC", "DESCRIPTION"), expr(passwordPolicies, "MIN_LENGTH", "MINIMUM_LENGTH", "PCQ_MIN_LENGTH"), expr(passwordPolicies, "EXPIRES_AFTER", "MAX_PASSWORD_AGE", "PCQ_MAX_AGE"), expr(passwordPolicies, "WARN_AFTER", "PASSWORD_WARNING_DAYS", "PCQ_WARN_AFTER")});
-            sample("connectors", connectors, new String[]{"Name", "Type", "Version", "Host"}, new String[]{expr(connectors, "SVR_NAME", "NAME"), expr(connectors, "SVR_TYPE", "TYPE"), expr(connectors, "SVR_VERSION", "CONNECTOR_VERSION", "VERSION"), expr(connectors, "SVR_HOST", "HOST")});
+            sample("connectors", connectors, new String[]{"Name"}, new String[]{expr(connectors, "SVR_NAME", "NAME")});
         }
     }
 }
@@ -6289,7 +6286,6 @@ declare
   l_resources varchar2(128);
   l_policies varchar2(128);
   l_connectors varchar2(128);
-  l_password_policies varchar2(128);
   function table_name(p_a varchar2, p_b varchar2 default null, p_c varchar2 default null) return varchar2 is
     l_name varchar2(128);
   begin
@@ -6403,6 +6399,23 @@ declare
   exception when others then
     dbms_output.put_line('ERROR|' || p_section || '|' || replace(sqlerrm, '|', ' '));
   end;
+  procedure sample_rows1(p_section varchar2, p_table varchar2, p_header varchar2, p_e1 varchar2) is
+    l_sql varchar2(32767);
+    l_rc sys_refcursor;
+    v1 varchar2(4000);
+  begin
+    if p_table is null or p_table = '' then return; end if;
+    l_sql := 'select ' || p_e1 || ' from ' || p_table || ' where rownum <= 100';
+    open l_rc for l_sql;
+    loop
+      fetch l_rc into v1;
+      exit when l_rc%notfound;
+      dbms_output.put_line('ROW|' || p_section || '|' || p_header || '|::|' || replace(nvl(v1,'-'),'|',' '));
+    end loop;
+    close l_rc;
+  exception when others then
+    dbms_output.put_line('ERROR|' || p_section || '|' || replace(sqlerrm, '|', ' '));
+  end;
   procedure sample_rows7(p_section varchar2, p_table varchar2, p_headers varchar2, p_e1 varchar2, p_e2 varchar2, p_e3 varchar2, p_e4 varchar2, p_e5 varchar2, p_e6 varchar2, p_e7 varchar2) is
     l_sql varchar2(32767);
     l_rc sys_refcursor;
@@ -6429,7 +6442,6 @@ begin
   l_resources := table_name('OBJ');
   l_policies := table_name('POL');
   l_connectors := table_name('SVR', 'IT_RESOURCE');
-  l_password_policies := table_name('PCQ', 'PWD_POLICY', 'PASSWORD_POLICY');
   count_table('users', 'Users', l_users);
   count_where('lockedUsers', 'Locked Users', l_users, status_where(l_users, 'USR_LOCKED', 'USR_LOCKED_FLAG', 'USR_LOCK', '''1'',''true'',''y'',''yes'',''locked'''));
   count_where('disabledUsers', 'Disabled Users', l_users, status_where(l_users, 'USR_DISABLED', 'USR_DISABLED_FLAG', 'USR_STATUS', '''1'',''true'',''y'',''yes'',''disabled'',''disable'''));
@@ -6441,7 +6453,6 @@ begin
   count_table('resources', 'Resource Objects', l_resources);
   count_table('accessPolicies', 'Access Policies', l_policies);
   count_table('connectors', 'IT Resources / Connectors', l_connectors);
-  count_table('passwordPolicies', 'Password Policies', l_password_policies);
   table_count_row('USR', 'Users', 'Core user information table');
   table_count_row('USG', 'Membership', 'User group membership');
   table_count_row('UGP', 'Groups and roles', 'User groups and role definitions');
@@ -6469,13 +6480,11 @@ begin
   section_info('appTemplates', l_app_templates);
   sample_rows('appTemplates', l_app_templates, 'Name|Description|Connector Name|Connector Version|Disconnected', expr(l_app_templates,'APP_TEMPLATE_NAME','TEMPLATE_NAME','NAME'), expr(l_app_templates,'DESCRIPTION','APP_TEMPLATE_DESCRIPTION','APP_TEMPLATE_DESC'), expr(l_app_templates,'CONNECTOR_NAME'), expr(l_app_templates,'CONNECTOR_VERSION','VERSION'), expr(l_app_templates,'DISCONNECTED','IS_DISCONNECTED','APP_TEMPLATE_DISCONNECTED'));
   section_info('resources', l_resources);
-  sample_rows('resources', l_resources, 'Name|Description|Type|Status|Key', expr(l_resources,'OBJ_NAME','NAME'), expr(l_resources,'OBJ_DESC','DESCRIPTION'), expr(l_resources,'OBJ_TYPE','TYPE'), expr(l_resources,'OBJ_STATUS','STATUS'), expr(l_resources,'OBJ_KEY','KEY'));
+  sample_rows1('resources', l_resources, 'Name', expr(l_resources,'OBJ_NAME','NAME'));
   section_info('accessPolicies', l_policies);
   sample_rows('accessPolicies', l_policies, 'Name|Description|Priority|Status|Key', expr(l_policies,'POL_NAME','NAME'), expr(l_policies,'POL_DESC','DESCRIPTION'), expr(l_policies,'POL_PRIORITY','PRIORITY'), expr(l_policies,'POL_STATUS','STATUS'), expr(l_policies,'POL_KEY','KEY'));
-  section_info('passwordPolicies', l_password_policies);
-  sample_rows('passwordPolicies', l_password_policies, 'Policy Name|Description|Minimum Length|Expires After Days|Warn After Days', expr(l_password_policies,'PCQ_NAME','POLICY_NAME','NAME'), expr(l_password_policies,'PCQ_DESC','DESCRIPTION'), expr(l_password_policies,'MIN_LENGTH','MINIMUM_LENGTH','PCQ_MIN_LENGTH'), expr(l_password_policies,'EXPIRES_AFTER','MAX_PASSWORD_AGE','PCQ_MAX_AGE'), expr(l_password_policies,'WARN_AFTER','PASSWORD_WARNING_DAYS','PCQ_WARN_AFTER'));
   section_info('connectors', l_connectors);
-  sample_rows('connectors', l_connectors, 'Name|Type|Version|Host|Key', expr(l_connectors,'SVR_NAME','NAME'), expr(l_connectors,'SVR_TYPE','TYPE'), expr(l_connectors,'SVR_VERSION','CONNECTOR_VERSION','VERSION'), expr(l_connectors,'SVR_HOST','HOST'), expr(l_connectors,'SVR_KEY','KEY'));
+  sample_rows1('connectors', l_connectors, 'Name', expr(l_connectors,'SVR_NAME','NAME'));
 end;
 /
 exit
