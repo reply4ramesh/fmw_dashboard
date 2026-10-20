@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 import json
 import base64
-import functools
 import http.client
 import io
 import mimetypes
@@ -17,7 +16,7 @@ import zipfile
 from email.message import EmailMessage
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import ThreadingMixIn
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 from urllib.request import ProxyHandler, Request, build_opener, urlopen
 
 from patchpilot import server as patchpilot_server
@@ -531,6 +530,24 @@ def build_update_check_payload():
 
 class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
     daemon_threads = True
+
+
+class EmbeddedPatchPilotHandler(patchpilot_server.PatchScopeHandler):
+    def translate_path(self, path):
+        clean_path = path.split("?", 1)[0].split("#", 1)[0]
+        trailing_slash = clean_path.rstrip().endswith("/")
+        try:
+            clean_path = unquote(clean_path, errors="surrogatepass")
+        except TypeError:
+            clean_path = unquote(clean_path)
+        full_path = str(patchpilot_server.ROOT)
+        for segment in filter(None, clean_path.split("/")):
+            if os.path.dirname(segment) or segment in (os.curdir, os.pardir):
+                continue
+            full_path = os.path.join(full_path, segment)
+        if trailing_slash:
+            full_path += "/"
+        return full_path
 
 
 def build_configured_environment_overview(environment):
@@ -2152,11 +2169,10 @@ def start_embedded_patchpilot():
     global PATCHPILOT_HTTPD, PATCHPILOT_THREAD
     if PATCHPILOT_HTTPD is not None:
         return
-    handler = functools.partial(
-        patchpilot_server.PatchScopeHandler,
-        directory=str(patchpilot_server.ROOT),
+    PATCHPILOT_HTTPD = patchpilot_server.ReusableTCPServer(
+        ("127.0.0.1", 0),
+        EmbeddedPatchPilotHandler,
     )
-    PATCHPILOT_HTTPD = patchpilot_server.ReusableTCPServer(("127.0.0.1", 0), handler)
     PATCHPILOT_THREAD = threading.Thread(
         target=PATCHPILOT_HTTPD.serve_forever,
         name="embedded-patchpilot",

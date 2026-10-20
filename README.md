@@ -1,5 +1,9 @@
 # FMW Operations Console
 
+## Version 159
+
+Version 159 makes the embedded PatchPilot static-file handler compatible with the Python 3.6 runtime used by existing FMW Operations Console installations. This fixes the `Remote end closed connection without response` error when opening the PatchPilot tab after upgrading to version 158.
+
 ## Version 158
 
 Version 158 bundles the complete PatchPilot 1.1.1 application into the FMW Operations Console. Selecting **PatchPilot** opens its SSH and patch-source Connect step immediately, defaults patch type to **Stack Patch Bundle**, and changes the guided left-side workflow for SPB versus other patch types. PatchPilot now runs through the console's own `/patchpilot/` route, so no separate PatchPilot URL or monitoring connection profile is required.

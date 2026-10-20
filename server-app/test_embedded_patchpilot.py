@@ -38,6 +38,14 @@ class EmbeddedPatchPilotTests(unittest.TestCase):
         self.assertIn('id="wizardSteps"', html)
         self.assertNotIn("PatchPilot Application URL", html)
 
+    def test_static_path_resolution_does_not_require_newer_python_directory_argument(self):
+        handler = object.__new__(app.EmbeddedPatchPilotHandler)
+        resolved = handler.translate_path("/assets/app.js?version=1")
+        self.assertEqual(
+            os.path.join(str(app.patchpilot_server.ROOT), "assets", "app.js"),
+            resolved,
+        )
+
     def test_patchpilot_assets_use_embedded_api_prefix(self):
         with urlopen(self.base_url + "/patchpilot/assets/app.js", timeout=5) as response:
             javascript = response.read().decode("utf-8")
