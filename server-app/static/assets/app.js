@@ -2511,4 +2511,83 @@ const params=new URLSearchParams({source:"fmw-dashboard",environmentId:String(re
 window.open(`${url}${url.includes("?")?"&":"?"}${params.toString()}`,"_blank","noopener");
 },true);
 
+// Version 156: Dashboard and PatchPilot are peer application modes.
+const APP_MODE_STORAGE_KEY="iam-monitoring.appMode";
+state.appMode=localStorage.getItem(APP_MODE_STORAGE_KEY)==="patchpilot"?"patchpilot":"dashboard";
+state.patchConnections=[];
+state.patchConnectionsLoading=false;
+
+function syncAppModeV156(){
+document.querySelectorAll("[data-app-mode]").forEach(function(button){const active=button.getAttribute("data-app-mode")===state.appMode;button.classList.toggle("is-active",active);button.setAttribute("aria-pressed",active?"true":"false");});
+document.body.classList.toggle("is-patchpilot-mode",state.appMode==="patchpilot");
+}
+
+async function loadPatchConnectionsV156(){
+const environmentId=currentEnvironmentId();
+if(!environmentId){state.patchConnections=[];return;}
+state.patchConnectionsLoading=true;
+try{const result=await fetchJson(`/api/patch-connections?environmentId=${encodeURIComponent(environmentId)}`);state.patchConnections=coerceList(result.connections);}catch(error){setMessage(error.message,"error");state.patchConnections=[];}finally{state.patchConnectionsLoading=false;render();}
+}
+
+function openPatchPilotConnectionV156(connection){
+const record=selectedEnvironmentRecord()||selectedEnvironmentOverview()||{};
+const server=record.server||{};
+const url=patchPilotConfiguredUrlV155();
+if(!url){setMessage("Configure the PatchPilot URL under Administration / Global Defaults before applying a patch.","error");return;}
+const params=new URLSearchParams({source:"fmw-dashboard",connectionId:String(connection.id||""),environmentId:String(record.id||""),customer:String(record.name||""),host:String(server.host||""),port:String(server.port||22),user:String(server.username||"oracle"),patchType:String(connection.patchType||""),patchPath:String(connection.patchPath||""),product:String(connection.product||""),oracleHome:String(connection.oracleHome||""),domainHome:String(connection.domainHome||""),instanceHome:String(connection.instanceHome||""),changeRef:String(connection.changeRef||"")});
+window.open(`${url}${url.includes("?")?"&":"?"}${params.toString()}`,"_blank","noopener");
+}
+
+function renderPatchConnectionsV156(record){
+if(state.patchConnectionsLoading)return'<p class="empty-state">Loading saved patch connections.</p>';
+if(!state.patchConnections.length)return'<div class="empty-state"><strong>No saved patch connections</strong><p>Create one from this environment profile, then use Apply Patch to open PatchPilot.</p></div>';
+return`<div class="patch-connection-list">${state.patchConnections.map(function(item){const home=item.oracleHome||item.instanceHome||"-";return`<article class="patch-connection-item"><div><h4>${escapeHtml(item.name)}</h4><p>${escapeHtml(item.product)} · ${escapeHtml(item.patchType)} · ${escapeHtml(home)}</p><p>Patch directory: ${escapeHtml(item.patchPath)}</p></div><div class="patch-connection-actions"><button class="button is-primary" type="button" data-apply-patch-connection="${escapeHtml(item.id)}">Apply Patch</button><button class="button is-quiet" type="button" data-delete-patch-connection="${escapeHtml(item.id)}">Delete</button></div></article>`;}).join("")}</div>`;
+}
+
+function renderPatchWorkspaceV156(){
+const record=selectedEnvironmentRecord()||selectedEnvironmentOverview()||{};
+if(!currentEnvironmentId())return'<div class="content-stack"><section class="panel"><div class="empty-state"><strong>Select an environment</strong><p>Choose an existing FMW connection profile from Context, then create a patch connection from its host and product homes.</p></div></section></div>';
+const server=record.server||{};
+const targets=patchPilotTargetsV155(record);
+const configuredUrl=patchPilotConfiguredUrlV155();
+const targetOptions=targets.map(function(item,index){return`<option value="${index}">${escapeHtml(item.label)} - ${escapeHtml(item.oracleHome||item.instanceHome)}</option>`;}).join("");
+return`<div class="content-stack"><section class="panel"><div class="panel-header"><div><h3 class="panel-title">Patch Connections</h3><p class="panel-copy">Saved patching profiles inherit the selected FMW environment's server connection. Passwords and private keys are never copied into PatchPilot.</p></div>${configuredUrl?renderBadge("PatchPilot ready","accent"):renderBadge("URL not configured","neutral")}</div><div class="patch-workspace-grid"><div><div class="patch-inherited-profile"><strong>Inherited from ${escapeHtml(environmentName(record))}</strong><p>${escapeHtml(server.username||"oracle")}@${escapeHtml(server.host||"-")}:${escapeHtml(server.port||22)}</p></div>${renderPatchConnectionsV156(record)}</div><form class="form" data-patch-connection-form><h3 class="panel-title">New Patch Connection</h3><p class="panel-copy">Add only the patch-specific values missing from the monitoring profile.</p><div class="form-grid"><div class="field field-span-2"><label>Connection Name</label><input name="name" required placeholder="OIG14c September SPB"></div><div class="field field-span-2"><label>Target Product Home</label><select name="targetIndex" required ${targets.length?"":"disabled"}>${targetOptions||'<option value="">No configured product homes</option>'}</select></div><div class="field"><label>Patch Type</label><select name="patchType">${["Stack Patch Bundle","CSPU","Bundle Patch","PSU","SPU","One-off","BSU"].map(function(value){return`<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`;}).join("")}</select></div><div class="field"><label>Change / Reference</label><input name="changeRef" placeholder="CHG or SR reference"></div><div class="field field-span-2"><label>Patch Directory on Target Server</label><input name="patchPath" required placeholder="/u01/stage/IDM_SPB_14.1.2.1.260906"></div></div><div class="modal-footer"><button class="button is-primary" type="submit" ${targets.length?"":"disabled"}>Save New Connection</button></div></form></div>${configuredUrl?"":'<div class="alert-card is-warning"><strong>PatchPilot URL is not configured</strong><p>An administrator must set it under Global Defaults before Apply Patch can launch the separate PatchPilot application.</p></div>'}</section></div>`;
+}
+
+renderSidebar=function(){
+if(state.appMode!=="patchpilot"){renderSidebarBeforeV155();return;}
+const record=selectedEnvironmentRecord()||selectedEnvironmentOverview()||{};
+refs.sidebarNav.innerHTML=`<p class="nav-heading">PatchPilot</p><button class="nav-item is-active" type="button"><span class="nav-item-label">Patch Connections</span><span class="nav-item-copy">${currentEnvironmentId()?escapeHtml(environmentName(record)):"Select an environment profile."}</span></button><div class="sidebar-note"><strong>Execution stays in PatchPilot</strong><p>The dashboard prepares and saves target context; PatchPilot validates and applies the patch.</p></div>`;
+};
+currentPageMeta=function(){
+if(state.appMode!=="patchpilot")return currentPageMetaBeforeV155();
+const record=selectedEnvironmentRecord()||selectedEnvironmentOverview()||{};
+return{breadcrumb:"PatchPilot / Patch Connections",title:"Patch Management",copy:currentEnvironmentId()?`Prepare patching connections for ${environmentName(record)} and open the guided apply workflow.`:"Select an existing FMW environment profile to begin.",statusLabel:patchPilotConfiguredUrlV155()?"Integration ready":"Setup required",statusTone:patchPilotConfiguredUrlV155()?"success":"warning",generatedAt:"Secrets remain in the FMW profile"};
+};
+renderPageContent=function(){return state.appMode==="patchpilot"?renderPatchWorkspaceV156():renderPageContentBeforeV155();};
+const renderBeforeV156=render;
+render=function(){renderBeforeV156();syncAppModeV156();};
+const changeContextBeforeV156=changeContext;
+changeContext=async function(context){await changeContextBeforeV156(context);if(state.appMode==="patchpilot")await loadPatchConnectionsV156();};
+
+document.addEventListener("click",async function(event){
+const modeButton=event.target.closest("[data-app-mode]");
+if(modeButton){state.appMode=modeButton.getAttribute("data-app-mode")==="patchpilot"?"patchpilot":"dashboard";localStorage.setItem(APP_MODE_STORAGE_KEY,state.appMode);if(state.appMode==="patchpilot"&&isAdministrationContext()&&state.lastEnvironmentId)await changeContext(state.lastEnvironmentId);else if(state.appMode==="patchpilot")await loadPatchConnectionsV156();else render();return;}
+const applyButton=event.target.closest("[data-apply-patch-connection]");
+if(applyButton){const connection=state.patchConnections.find(function(item){return item.id===applyButton.getAttribute("data-apply-patch-connection");});if(connection)openPatchPilotConnectionV156(connection);return;}
+const deleteButton=event.target.closest("[data-delete-patch-connection]");
+if(deleteButton){if(!window.confirm("Delete this saved patch connection?"))return;try{await fetchJson(`/api/patch-connections/${encodeURIComponent(deleteButton.getAttribute("data-delete-patch-connection"))}`,{method:"DELETE"});setMessage("Patch connection deleted.","success");await loadPatchConnectionsV156();}catch(error){setMessage(error.message,"error");}return;}
+},true);
+
+document.addEventListener("submit",async function(event){
+const form=event.target.closest("[data-patch-connection-form]");
+if(!form)return;
+event.preventDefault();
+const record=selectedEnvironmentRecord()||selectedEnvironmentOverview()||{};
+const targets=patchPilotTargetsV155(record);
+const target=targets[parseInt(form.elements.targetIndex.value,10)]||{};
+const payload={name:form.elements.name.value.trim(),environmentId:String(record.id||""),product:target.product||"",oracleHome:target.oracleHome||"",domainHome:target.domainHome||"",instanceHome:target.instanceHome||"",patchType:form.elements.patchType.value,patchPath:form.elements.patchPath.value.trim(),changeRef:form.elements.changeRef.value.trim()};
+try{await fetchJson("/api/patch-connections",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});form.reset();setMessage("New patch connection saved. It is ready for Apply Patch.","success");await loadPatchConnectionsV156();}catch(error){setMessage(error.message,"error");}
+},true);
+
 loadStoredState();render();loadAllData(false);

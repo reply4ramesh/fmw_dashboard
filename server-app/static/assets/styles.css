@@ -5564,6 +5564,88 @@ tbody tr:last-child td {
     color: var(--muted);
 }
 
+/* Version 156: top-level dashboard and patch workspace modes. */
+.app-mode-switch {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px;
+    border: 1px solid #4a4744;
+    border-radius: 6px;
+    background: #252321;
+}
+
+.app-mode-button {
+    min-height: 30px;
+    padding: 0 14px;
+    border: 0;
+    border-radius: 4px;
+    color: #d8d4d0;
+    background: transparent;
+    font: inherit;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.app-mode-button.is-active {
+    color: #fff;
+    background: #c74634;
+}
+
+.patch-workspace-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.15fr) minmax(320px, .85fr);
+    gap: 12px;
+    align-items: start;
+}
+
+.patch-connection-list {
+    display: grid;
+    gap: 8px;
+}
+
+.patch-connection-item {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 12px;
+    align-items: center;
+    padding: 12px;
+    border: 1px solid #d8d2cc;
+    border-radius: 6px;
+    background: #fff;
+}
+
+.patch-connection-item h4,
+.patch-connection-item p {
+    margin: 0;
+}
+
+.patch-connection-item p {
+    margin-top: 4px;
+    color: #615b56;
+}
+
+.patch-connection-actions {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+}
+
+.patch-inherited-profile {
+    margin-bottom: 12px;
+    padding: 10px 12px;
+    border-left: 3px solid #c74634;
+    background: #f8f5f2;
+}
+
+.patch-inherited-profile p {
+    margin: 3px 0 0;
+}
+
+@media (max-width: 1050px) {
+    .patch-workspace-grid { grid-template-columns: 1fr; }
+    .app-mode-switch { order: 3; }
+}
+
 .patchpilot-security-note {
     margin-top: 16px;
     border-left: 4px solid var(--success, #2f6d45);

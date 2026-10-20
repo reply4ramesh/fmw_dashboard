@@ -1,5 +1,11 @@
 # FMW Monitoring Dashboard
 
+## Version 156
+
+The application now has two top-level modes. **Dashboard** remains the default monitoring, product-information, reporting, and Log Analyzer experience. **PatchPilot** provides a patch workspace that derives non-secret host and product-home details from an existing FMW environment profile.
+
+Patch-specific values such as patch type, server-side patch directory, and change reference are saved as reusable patch connections in the dashboard registry. **Apply Patch** opens the separately deployed PatchPilot application with that context; SSH passwords and private keys are never included in the handoff.
+
 `iam-monitoring` is a Linux-hosted dashboard for Oracle IAM environments, including OUD and WebLogic monitoring, environment bootstrap, scheduled collection, and GitHub-based upgrades.
 
 ## Quick Install

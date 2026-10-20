@@ -44,6 +44,19 @@ def _connect(db_path):
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS patch_connections (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            connection_id TEXT NOT NULL UNIQUE,
+            connection_name TEXT NOT NULL,
+            environment_id TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
     conn.commit()
     return conn
 
@@ -365,6 +378,99 @@ def delete_environment(db_path, environment_id):
     with _connect(db_path) as conn:
         before = conn.total_changes
         conn.execute("DELETE FROM environments WHERE environment_id = ?", (str(environment_id),))
+        conn.execute("DELETE FROM patch_connections WHERE environment_id = ?", (str(environment_id),))
+        conn.commit()
+        return conn.total_changes > before
+
+
+def _row_to_patch_connection(row):
+    if not row:
+        return None
+    payload = json.loads(row["payload_json"] or "{}")
+    payload.update({
+        "id": row["connection_id"],
+        "name": row["connection_name"],
+        "environmentId": row["environment_id"],
+        "createdAt": row["created_at"],
+        "updatedAt": row["updated_at"],
+    })
+    return payload
+
+
+def list_patch_connections(db_path, environment_id=None):
+    sql = "SELECT connection_id, connection_name, environment_id, payload_json, created_at, updated_at FROM patch_connections"
+    params = ()
+    if environment_id:
+        sql += " WHERE environment_id = ?"
+        params = (str(environment_id),)
+    sql += " ORDER BY lower(connection_name), id"
+    with _connect(db_path) as conn:
+        rows = conn.execute(sql, params).fetchall()
+    return [_row_to_patch_connection(row) for row in rows]
+
+
+def save_patch_connection(db_path, payload, connection_id=None):
+    payload = json.loads(json.dumps(payload or {}))
+    environment_id = str(payload.get("environmentId") or "").strip()
+    if not get_environment(db_path, environment_id, include_secret=False):
+        raise ValueError("Select a valid FMW environment profile.")
+    name = str(payload.get("name") or "").strip()
+    patch_type = str(payload.get("patchType") or "").strip()
+    patch_path = str(payload.get("patchPath") or "").strip()
+    product = str(payload.get("product") or "").strip()
+    oracle_home = str(payload.get("oracleHome") or "").strip()
+    instance_home = str(payload.get("instanceHome") or "").strip()
+    if not name:
+        raise ValueError("Patch connection name is required.")
+    if not patch_type or not patch_path:
+        raise ValueError("Patch type and patch directory are required.")
+    if not product or (not oracle_home and not instance_home):
+        raise ValueError("Select a configured product home.")
+    normalized = {
+        "name": name,
+        "environmentId": environment_id,
+        "product": product,
+        "oracleHome": oracle_home,
+        "domainHome": str(payload.get("domainHome") or "").strip(),
+        "instanceHome": instance_home,
+        "patchType": patch_type,
+        "patchPath": patch_path,
+        "changeRef": str(payload.get("changeRef") or "").strip(),
+    }
+    now = _now_utc_iso()
+    with _connect(db_path) as conn:
+        existing = None
+        if connection_id:
+            existing = conn.execute(
+                "SELECT connection_id, created_at FROM patch_connections WHERE connection_id = ?",
+                (str(connection_id),),
+            ).fetchone()
+        if existing:
+            normalized_id = existing["connection_id"]
+            conn.execute(
+                "UPDATE patch_connections SET connection_name = ?, environment_id = ?, payload_json = ?, updated_at = ? WHERE connection_id = ?",
+                (name, environment_id, json.dumps(normalized), now, normalized_id),
+            )
+        else:
+            normalized_id = slugify(payload.get("id") or name or "patch-connection")
+            taken = {item.get("id") for item in list_patch_connections(db_path)}
+            base = normalized_id
+            suffix = 2
+            while normalized_id in taken:
+                normalized_id = "{0}-{1}".format(base, suffix)
+                suffix += 1
+            conn.execute(
+                "INSERT INTO patch_connections(connection_id, connection_name, environment_id, payload_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (normalized_id, name, environment_id, json.dumps(normalized), now, now),
+            )
+        conn.commit()
+    return next(item for item in list_patch_connections(db_path) if item.get("id") == normalized_id)
+
+
+def delete_patch_connection(db_path, connection_id):
+    with _connect(db_path) as conn:
+        before = conn.total_changes
+        conn.execute("DELETE FROM patch_connections WHERE connection_id = ?", (str(connection_id),))
         conn.commit()
         return conn.total_changes > before
 

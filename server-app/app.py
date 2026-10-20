@@ -41,13 +41,16 @@ from config_store import (
     normalize_ssh_profile_payload,
 )
 from environment_registry import (
+    delete_patch_connection,
     delete_environment,
     get_environment,
     get_global_defaults,
+    list_patch_connections,
     list_environments,
     migrate_config_environments,
     save_environment,
     save_global_defaults,
+    save_patch_connection,
 )
 from job_runner import (
     bootstrap_environment_runtime,
@@ -1329,6 +1332,10 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/admin/defaults":
             return self.send_json(200, get_global_defaults(DB_PATH, include_secret=False))
 
+        if path == "/api/patch-connections":
+            environment_id = str((query.get("environmentId") or [""])[0]).strip()
+            return self.send_json(200, {"connections": list_patch_connections(DB_PATH, environment_id or None)})
+
         match = re.match(r"^/api/environments/([^/]+)/reports/([^/]+)$", path)
         if match:
             report = load_environment_history_snapshot(DB_PATH, match.group(1), match.group(2))
@@ -1388,6 +1395,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/admin/environments":
             return self.handle_create_environment()
 
+        if path == "/api/patch-connections":
+            return self.handle_save_patch_connection()
+
         match = re.match(r"^/api/admin/environments/([^/]+)/bootstrap$", path)
         if match:
             return self.handle_bootstrap_environment(match.group(1))
@@ -1439,6 +1449,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(200, save_global_defaults(DB_PATH, parse_json_body(self)))
             except Exception as exc:
                 return self.send_json(400, {"error": str(exc)})
+        match = re.match(r"^/api/patch-connections/([^/]+)$", path)
+        if match:
+            return self.handle_save_patch_connection(match.group(1))
         match = re.match(r"^/api/admin/environments/([^/]+)$", path)
         if match:
             return self.handle_update_environment(match.group(1))
@@ -1447,6 +1460,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_DELETE(self):
         parsed = urlparse(self.path)
         path = parsed.path or "/"
+        match = re.match(r"^/api/patch-connections/([^/]+)$", path)
+        if match:
+            return self.handle_delete_patch_connection(match.group(1))
         match = re.match(r"^/api/admin/notifications/recipients/([^/]+)$", path)
         if match:
             return self.handle_delete_notification_recipient(match.group(1))
@@ -1646,6 +1662,21 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(200, payload)
         except Exception as exc:
             self.send_json(500, {"error": str(exc)})
+
+    def handle_save_patch_connection(self, connection_id=None):
+        try:
+            connection = save_patch_connection(DB_PATH, parse_json_body(self), connection_id=connection_id)
+            self.send_json(200 if connection_id else 201, {"connection": connection})
+        except Exception as exc:
+            self.send_json(400, {"error": str(exc)})
+
+    def handle_delete_patch_connection(self, connection_id):
+        try:
+            if not delete_patch_connection(DB_PATH, connection_id):
+                return self.send_json(404, {"error": "Patch connection not found."})
+            self.send_json(200, {"deleted": True})
+        except Exception as exc:
+            self.send_json(400, {"error": str(exc)})
 
     def handle_admin_notifications(self):
         try:
