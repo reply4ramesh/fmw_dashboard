@@ -157,7 +157,12 @@ sudo systemctl restart iam-monitoring
 - Bootstrap uses the initial SSH user/password or private key once.
 - After bootstrap, collection uses the installed runtime SSH key.
 - Use `Run Jobs Now` inside an environment to collect immediately.
+- Use `Patch Management` inside an environment to launch PatchPilot with the selected profile's non-secret server and Oracle-home context. Patch type and patch directory are selected for each patch run.
 - Scheduled collection runs through `/etc/cron.d/iam-monitoring`.
+
+## PatchPilot Integration
+
+Configure the PatchPilot application URL during installation with `--patchpilot-url http://patchpilot-host:4128/`, or later under `Administration -> Global Defaults`. The dashboard reuses the selected FMW environment profile and never places SSH passwords, private keys, or passphrases in the launch URL. PatchPilot asks for the required SSH credential and independently validates the target and patch directory before execution.
 
 ## Historical Reports
 

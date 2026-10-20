@@ -5531,3 +5531,48 @@ tbody tr:last-child td {
     border-radius: 0;
     box-shadow: none;
 }
+
+.patchpilot-flow {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+    margin: 0 0 18px;
+}
+
+.patchpilot-flow > div {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px;
+    background: var(--surface-muted);
+}
+
+.patchpilot-flow span {
+    display: inline-grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    margin-right: 7px;
+    border-radius: 50%;
+    background: var(--header-bg);
+    color: #fff;
+    font-weight: 800;
+}
+
+.patchpilot-flow p,
+.patchpilot-security-note p {
+    margin: 7px 0 0;
+    color: var(--muted);
+}
+
+.patchpilot-security-note {
+    margin-top: 16px;
+    border-left: 4px solid var(--success, #2f6d45);
+    padding: 10px 12px;
+    background: #f2f8f3;
+}
+
+@media (max-width: 900px) {
+    .patchpilot-flow {
+        grid-template-columns: 1fr;
+    }
+}

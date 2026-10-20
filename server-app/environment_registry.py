@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import sqlite3
 from datetime import datetime
 
@@ -108,6 +109,9 @@ def default_global_defaults():
             "automaticHour": max(0, min(23, automatic_hour)),
             "lastAutomaticCheckDate": "",
         },
+        "integrations": {
+            "patchPilotUrl": str(os.environ.get("IAM_MONITORING_PATCHPILOT_URL") or "").strip(),
+        },
     }
 
 
@@ -171,6 +175,11 @@ def save_global_defaults(db_path, payload):
         automatic_hour = 2
     updates["automaticHour"] = max(0, min(23, automatic_hour))
     updates["lastAutomaticCheckDate"] = str(updates.get("lastAutomaticCheckDate") or "").strip()
+    integrations = normalized.get("integrations") or {}
+    patch_pilot_url = str(integrations.get("patchPilotUrl") or "").strip()
+    if patch_pilot_url and not re.match(r"^https?://", patch_pilot_url, re.I):
+        raise ValueError("PatchPilot URL must start with http:// or https://.")
+    integrations["patchPilotUrl"] = patch_pilot_url.rstrip("/") + "/" if patch_pilot_url else ""
     with _connect(db_path) as conn:
         conn.execute(
             "INSERT OR REPLACE INTO global_settings(setting_key, payload_json, updated_at) VALUES ('connection_defaults', ?, ?)",

@@ -17,6 +17,8 @@ COLLECTOR_MINUTES_SET=0
 AUTO_UPDATE_ENABLED="0"
 AUTO_UPDATE_SET=0
 AUTO_UPDATE_HOUR="2"
+PATCHPILOT_URL="${IAM_MONITORING_PATCHPILOT_URL:-}"
+PATCHPILOT_URL_SET=0
 SKIP_OS_PACKAGES="${SKIP_OS_PACKAGES:-0}"
 PKG_MGR=""
 CRON_SERVICE_NAME="cron"
@@ -39,6 +41,7 @@ Options:
   --collector-minutes 60
   --auto-update daily
   --auto-update-hour 2
+  --patchpilot-url http://patchpilot-host:4128/
   --archive /tmp/iam-monitoring.tar.gz
   --skip-os-packages
 
@@ -68,6 +71,7 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --auto-update-hour) AUTO_UPDATE_HOUR="${2:-}"; shift 2 ;;
+    --patchpilot-url) PATCHPILOT_URL="${2:-}"; PATCHPILOT_URL_SET=1; shift 2 ;;
     --archive) ARCHIVE="${2:-}"; shift 2 ;;
     --skip-os-packages) SKIP_OS_PACKAGES=1; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -135,6 +139,18 @@ prompt_for_auto_update() {
 
   if ! [[ "${AUTO_UPDATE_HOUR}" =~ ^[0-9]+$ ]] || (( AUTO_UPDATE_HOUR < 0 || AUTO_UPDATE_HOUR > 23 )); then
     echo "Invalid auto-update hour: ${AUTO_UPDATE_HOUR}. Use an hour from 0 to 23." >&2
+    exit 1
+  fi
+}
+
+prompt_for_patchpilot_url() {
+  if [[ "${PATCHPILOT_URL_SET}" -eq 0 && -t 0 ]]; then
+    local reply=""
+    read -r -p "PatchPilot URL (optional, for example http://patchpilot-host:4128/) [disabled]: " reply
+    PATCHPILOT_URL="${reply:-${PATCHPILOT_URL}}"
+  fi
+  if [[ -n "${PATCHPILOT_URL}" && ! "${PATCHPILOT_URL}" =~ ^https?:// ]]; then
+    echo "Invalid PatchPilot URL: ${PATCHPILOT_URL}. Use http:// or https://." >&2
     exit 1
   fi
 }
@@ -293,6 +309,7 @@ validate_source_dir "${SOURCE_DIR}"
 prompt_for_port
 prompt_for_collector_minutes
 prompt_for_auto_update
+prompt_for_patchpilot_url
 
 if [[ "${SKIP_OS_PACKAGES}" == "1" || "${SKIP_OS_PACKAGES,,}" == "true" || "${SKIP_OS_PACKAGES,,}" == "yes" ]]; then
   section "Skipping operating system packages"
@@ -336,6 +353,7 @@ IAM_MONITORING_DEFAULT_COLLECTION_MINUTES=${COLLECTOR_MINUTES}
 IAM_MONITORING_SCHEDULER_MINUTES=5
 IAM_MONITORING_AUTO_UPDATE_ENABLED=${AUTO_UPDATE_ENABLED}
 IAM_MONITORING_AUTO_UPDATE_HOUR=${AUTO_UPDATE_HOUR}
+IAM_MONITORING_PATCHPILOT_URL=${PATCHPILOT_URL}
 # Optional outbound proxy for GitHub update checks
 # IAM_MONITORING_HTTP_PROXY=http://proxy.example.com:80
 # IAM_MONITORING_HTTPS_PROXY=http://proxy.example.com:80

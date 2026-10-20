@@ -2449,4 +2449,66 @@ const oimProfile=metrics.oimProfile||{};
 const productInfo=metrics.productInfo||{};
 return`<div class="content-stack">${renderSummaryTiles([{label:"OIM Servers",value:formatValue(oimInventory.length,"0"),copy:"OIM managed server details come from the shared WebLogic domain."},{label:"Expected Servers",value:expectedServers.length||0,copy:"Configured OIM/WebLogic server names."},{label:"Applications",value:oimInfoCountV140(productInfo,"applications"),copy:"Application instances from the OIM schema."},{label:"Access Policies",value:oimInfoCountV140(productInfo,"accessPolicies"),copy:"Access policies from the OIM schema."},{label:"Connectors",value:oimInfoCountV140(productInfo,"connectors"),copy:"IT resource names from SVR."},{label:"OIM Schema Password",value:oimProfile.hasDatabasePassword?"Stored":"Missing",copy:"Datasource details come from oimOperationsDB*.xml."}])}${renderEnvironmentStatusReasons(dashboard)}<section class="panel"><div class="panel-header"><div><h3 class="panel-title">Saved OIG/OIM Profile</h3><p class="panel-copy">OIG product paths, OIM administrator credentials, WebLogic admin endpoint, and OIM schema password.</p></div></div>${renderDefinitionList([{key:"OIG/OIM ORACLE_HOME",value:oig.oracleHome||weblogic.oracleHome||"-"},{key:"OIG/OIM DOMAIN_HOME",value:oig.domainHome||weblogic.domainHome||"-"},{key:"WebLogic Admin Server URL",value:weblogic.adminUrl||"-"},{key:"WebLogic Admin Username",value:weblogic.adminUsername||"-"},{key:"OIM Administrator Username",value:oig.adminUsername||oimProfile.adminUsername||"xelsysadm"},{key:"OIM Administrator Password",value:(oig.hasAdminPassword||oimProfile.hasPassword)?"Stored":"Not stored"},{key:"OIM Datasource File",value:(productInfo||{}).datasourceFile||"$DOMAIN_HOME/config/jdbc/oimOperationsDB*.xml"},{key:"OIM Schema User",value:((productInfo||{}).databaseUser)||"-"},{key:"OIM Schema Password",value:(oig.hasDatabasePassword||oimProfile.hasDatabasePassword)?"Stored":"Not stored"}])}</section>${renderOimProductInformationV140(productInfo)}${renderWebLogicServerDetails(runtime,oimInventory)}${renderOigOpatchInventory(opatch)}${renderOigCertificates(certificates,metrics.certificateError)}<section class="panel"><div class="panel-header"><div><h3 class="panel-title">OIG/OIM Checks</h3><p class="panel-copy">OIG/OIM check definitions saved for this environment.</p></div></div>${renderChecksTable(checks,"No OIG/OIM application checks are configured yet.")}</section>${metrics.error?`<p class="table-note">${escapeHtml(metrics.error)}</p>`:""}${metrics.message?`<p class="table-note">${escapeHtml(metrics.message)}</p>`:""}</div>`;
 };
+// Version 155: PatchPilot launch integration reuses the selected FMW profile.
+function patchPilotTargetsV155(record){
+const env=record||{};
+const products=resolvedProducts(env);
+const rows=[];
+const seen=new Set();
+function add(label,product,oracleHome,domainHome,instanceHome){
+const home=String(oracleHome||"").trim();
+const instance=String(instanceHome||"").trim();
+const key=[product,home,instance].join("|");
+if((!home&&!instance)||seen.has(key))return;
+seen.add(key);
+rows.push({label:label,product:product,oracleHome:home,domainHome:String(domainHome||"").trim(),instanceHome:instance});
+}
+if(products.oig)add("OIG / OIM","OIG",(env.oig||{}).oracleHome,(env.oig||{}).domainHome,"");
+if(products.oam)add("OAM","OAM",(env.oam||{}).oracleHome,(env.oam||{}).domainHome,"");
+if(products.soa)add("SOA","SOA",(env.soa||{}).oracleHome,(env.soa||{}).domainHome,"");
+if(products.weblogic)add("WebLogic","WebLogic",(env.weblogic||{}).oracleHome,(env.weblogic||{}).domainHome,"");
+const oud=env.oud||{};
+const oudInstances=coerceList(oud.instances);
+if(products.oud&&oudInstances.length){oudInstances.forEach(function(item,index){add(item.name||`OUD Instance ${index+1}`,"OUD",oud.oracleHome,oud.domainHome,item.instanceHome);});}
+else if(products.oud)add("OUD","OUD",oud.oracleHome,oud.domainHome,oud.instanceHome);
+if(products.oid)add("OID","OID",(env.oid||{}).oracleHome,"","");
+return rows;
+}
+function patchPilotConfiguredUrlV155(){return String((((state.admin||{}).globalDefaults||{}).integrations||{}).patchPilotUrl||"").trim();}
+function renderPatchPilotPageV155(){
+const record=selectedEnvironmentRecord()||selectedEnvironmentOverview()||{};
+const server=record.server||{};
+const targets=patchPilotTargetsV155(record);
+const configuredUrl=patchPilotConfiguredUrlV155();
+const targetOptions=targets.length?targets.map(function(item,index){const path=item.oracleHome||item.instanceHome;return`<option value="${index}">${escapeHtml(item.label)} - ${escapeHtml(path)}</option>`;}).join(""):'<option value="">No product home configured</option>';
+return`<div class="content-stack"><section class="panel patchpilot-launch-panel"><div class="panel-header"><div><h3 class="panel-title">Launch PatchPilot</h3><p class="panel-copy">Use this environment profile as the target. Patch type and patch directory belong to this patch run and are not saved in the monitoring profile.</p></div>${configuredUrl?renderBadge("Integration ready","accent"):renderBadge("URL not configured","neutral")}</div><div class="patchpilot-flow"><div><span>1</span><strong>Reuse profile</strong><p>Host, SSH port and user come from ${escapeHtml(environmentName(record))}.</p></div><div><span>2</span><strong>Choose the run</strong><p>Select the target home, patch type and server-side patch directory.</p></div><div><span>3</span><strong>Validate in PatchPilot</strong><p>Enter the SSH credential there, then run discovery and README checks.</p></div></div><form class="form" data-patchpilot-launch-form><div class="form-grid three-column"><div class="field"><label>Target Server</label><input name="targetServer" value="${escapeHtml(server.host||"")}" readonly></div><div class="field"><label>SSH User</label><input name="sshUser" value="${escapeHtml(server.username||"oracle")}" readonly></div><div class="field"><label>SSH Port</label><input name="sshPort" value="${escapeHtml(server.port||22)}" readonly></div><div class="field field-span-2"><label>Target Product Home</label><select name="targetIndex" ${targets.length?"":"disabled"}>${targetOptions}</select></div><div class="field"><label>Patch Type</label><select name="patchType">${["Stack Patch Bundle","CSPU","Bundle Patch","PSU","SPU","One-off","BSU"].map(function(value){return`<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`;}).join("")}</select></div><div class="field field-span-2"><label>Patch Directory on Target Server</label><input name="patchPath" required placeholder="/u01/stage/IDM_SPB_14.1.2.1.260906"></div><div class="field"><label>Change / Reference (Optional)</label><input name="changeRef" placeholder="CHG or SR reference"></div></div>${configuredUrl?`<div class="patchpilot-security-note"><strong>Credentials stay out of the handoff</strong><p>The dashboard sends only non-secret profile metadata. PatchPilot requires an SSH password before it connects or runs a command.</p></div><div class="modal-footer"><button class="button is-primary" type="submit" ${targets.length&&server.host?"":"disabled"}>Open in PatchPilot</button></div>`:`<div class="alert-card is-warning"><strong>Configure PatchPilot first</strong><p>Set the PatchPilot URL under Administration / Global Defaults / PatchPilot Integration or install with <code>--patchpilot-url</code>.</p></div>`}</form></section></div>`;
+}
+const normalizeSectionForContextBeforeV155=normalizeSectionForContext;
+normalizeSectionForContext=function(context,section){if(context!=="administration"&&section==="env-patchpilot")return section;return normalizeSectionForContextBeforeV155(context,section);};
+const navGroupForSectionBeforeV155=navGroupForSection;
+navGroupForSection=function(section){if(section==="env-patchpilot")return"patching";return navGroupForSectionBeforeV155(section);};
+const renderSidebarBeforeV155=renderSidebar;
+renderSidebar=function(){renderSidebarBeforeV155();if(isAdministrationContext())return;const group={id:"patching",label:"Patch Management",expanded:state.navGroups.patching!==false,items:[{id:"env-patchpilot",label:"PatchPilot",copy:"Launch a guided patch run for this environment."}]};refs.sidebarNav.insertAdjacentHTML("beforeend",renderSidebarGroup(group));};
+const currentPageMetaBeforeV155=currentPageMeta;
+currentPageMeta=function(){const meta=currentPageMetaBeforeV155();if(!isAdministrationContext()&&state.activeSection==="env-patchpilot"){const record=selectedEnvironmentRecord()||selectedEnvironmentOverview()||{};return Object.assign({},meta,{breadcrumb:`Environment / ${environmentName(record)} / Patch Management`,title:"Patch Management",copy:"Launch PatchPilot with the selected environment's non-secret connection and product-home context."});}return meta;};
+const renderPageContentBeforeV155=renderPageContent;
+renderPageContent=function(){if(!isAdministrationContext()&&state.activeSection==="env-patchpilot")return renderPatchPilotPageV155();return renderPageContentBeforeV155();};
+const renderGlobalDefaultsBeforeV155=renderGlobalDefaultsPageV131;
+renderGlobalDefaultsPageV131=function(){const integrations=((state.admin||{}).globalDefaults||{}).integrations||{};return`${renderGlobalDefaultsBeforeV155()}<div class="content-stack patchpilot-settings"><section class="panel"><div class="panel-header"><div><h3 class="panel-title">PatchPilot Integration</h3><p class="panel-copy">Connect this dashboard to the separately deployed PatchPilot application.</p></div></div><form class="form" data-patchpilot-settings-form><div class="form-grid"><div class="field field-span-2"><label>PatchPilot URL</label><input name="patchPilotUrl" value="${escapeHtml(integrations.patchPilotUrl||"")}" placeholder="http://patchpilot-host:4128/"><p class="field-hint">Use a browser-accessible URL. Environment credentials are never appended to it.</p></div></div><div class="modal-footer"><button class="button is-primary" type="submit">Save PatchPilot URL</button></div></form></section></div>`;};
+document.addEventListener("submit",async function(event){
+const settings=event.target.closest("[data-patchpilot-settings-form]");
+if(settings){event.preventDefault();try{await fetchJson("/api/admin/defaults",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({integrations:{patchPilotUrl:settings.elements.patchPilotUrl.value.trim()}})});setMessage("PatchPilot integration saved.","success");await loadAllData(false);}catch(error){setMessage(error.message,"error");}return;}
+const launch=event.target.closest("[data-patchpilot-launch-form]");
+if(!launch)return;
+event.preventDefault();
+const record=selectedEnvironmentRecord()||selectedEnvironmentOverview()||{};
+const targets=patchPilotTargetsV155(record);
+const target=targets[parseInt(launch.elements.targetIndex.value,10)]||{};
+const url=patchPilotConfiguredUrlV155();
+if(!url||!target.oracleHome&&!target.instanceHome){setMessage("PatchPilot URL and a product home are required.","error");return;}
+const server=record.server||{};
+const params=new URLSearchParams({source:"fmw-dashboard",environmentId:String(record.id||""),customer:String(record.name||""),host:String(server.host||""),port:String(server.port||22),user:String(server.username||"oracle"),patchType:launch.elements.patchType.value,patchPath:launch.elements.patchPath.value.trim(),product:String(target.product||""),oracleHome:String(target.oracleHome||""),domainHome:String(target.domainHome||""),instanceHome:String(target.instanceHome||""),changeRef:launch.elements.changeRef.value.trim()});
+window.open(`${url}${url.includes("?")?"&":"?"}${params.toString()}`,"_blank","noopener");
+},true);
+
 loadStoredState();render();loadAllData(false);
