@@ -257,6 +257,8 @@ validate_source_dir() {
     upgrade_watcher.py \
     requirements.txt \
     scheduler_jobs.sh \
+    patchpilot/server.py \
+    patchpilot/index.html \
     static \
     deploy \
     deploy/iam-monitoring-upgrader.service; do
@@ -407,6 +409,7 @@ section "Validating application modules"
   "${INSTALL_DIR}/environment_registry.py" \
   "${INSTALL_DIR}/job_runner.py" \
   "${INSTALL_DIR}/notification_store.py" \
+  "${INSTALL_DIR}/patchpilot/server.py" \
   "${INSTALL_DIR}/support_store.py" \
   "${INSTALL_DIR}/upgrade_runtime.py" \
   "${INSTALL_DIR}/upgrade_watcher.py"

@@ -23,7 +23,7 @@ const OUD_METRIC_GROUPS=[{id:"runtime",label:"Runtime Details"},{id:"backends",l
 const DEFAULT_OID_METRIC_GROUPS=["opatch","certificates","configset","schema","catalogs"];
 const OID_METRIC_GROUPS=[{id:"opatch",label:"OPatch"},{id:"certificates",label:"Certificates"},{id:"configset",label:"OID Instance Info"},{id:"system",label:"System Information"},{id:"schema",label:"Schema"},{id:"passwordPolicies",label:"Password Policies"},{id:"externalPlugins",label:"External Authentication Plugins"},{id:"catalogs",label:"Indexed Attributes"},{id:"monitor",label:"cn=monitor Categories"},{id:"workQueue",label:"Work Queue"},{id:"clientConnections",label:"Client Connections"},{id:"version",label:"Version"},{id:"dipProfiles",label:"DIP Profiles"},{id:"defaultSubscriber",label:"Default Subscriber"},{id:"orclaci",label:"orclaci"},{id:"replicationConfig",label:"Replication Configset"}];
 const STORAGE_KEYS={version:"iam-monitoring.uiVersion",activeContext:"iam-monitoring.activeContext",activeSection:"iam-monitoring.activeSection",activeProductTab:"iam-monitoring.activeProductTab",lastEnvironmentId:"iam-monitoring.lastEnvironmentId",navGroups:"iam-monitoring.navGroups"};
-const UI_STATE_VERSION="2026-07-06-readable-reports-v133";
+const UI_STATE_VERSION="2026-10-20-embedded-patchpilot-v158";
 const state={appShell:null,admin:null,notifications:null,dashboard:null,activeContext:"administration",activeSection:"admin-environments",activeProductTab:"oud",activeWeblogicProductTab:"weblogic",activeOidProductTab:"oracleHome",activeWeblogicOracleHomeNode:"node1",activeClusterServerMetricsNode:"node1",lastEnvironmentId:null,navGroups:{overview:true,infrastructure:true,applications:true,logs:true},collectorRefreshEnvironmentId:null,collectorRefreshDeadline:0,upgradeRefreshDeadline:0,updateCheck:null,isCheckingUpdates:false,isRefreshing:false,editingEnvironmentId:null,editingRecipientId:null,environmentModalOpen:false,message:null,isLoading:false,loadedWeblogicMetricGroups:DEFAULT_WEBLOGIC_METRIC_GROUPS.slice(),loadedOaaMetricGroups:DEFAULT_OAA_METRIC_GROUPS.slice(),loadedOudMetricGroups:DEFAULT_OUD_METRIC_GROUPS.slice(),loadedOidMetricGroups:DEFAULT_OID_METRIC_GROUPS.slice(),oaaPropertySearchTerm:"",selectedOudInstanceNames:[],oudInstanceSelectionTouched:false,logScope:{environmentId:"",profiles:[],activeProfileId:"",activeGroupId:"",files:[],selectedFile:"",logText:"",isLoading:false,isReading:false,error:"",viewMode:"tail",tailLines:500,filterText:"",filterLevel:"all",filterLogger:"",analysisOnlyProblems:false,fileFilter:""}};
 let collectorRefreshTimer=0;
 let upgradeRefreshTimer=0;
@@ -2544,10 +2544,8 @@ if(!state.patchConnections.length)return'<div class="empty-state"><strong>No sav
 return`<div class="patch-connection-list">${state.patchConnections.map(function(item){const home=item.oracleHome||item.instanceHome||"-";return`<article class="patch-connection-item"><div><h4>${escapeHtml(item.name)}</h4><p>${escapeHtml(item.product)} · ${escapeHtml(item.patchType)} · ${escapeHtml(home)}</p><p>Patch directory: ${escapeHtml(item.patchPath)}</p></div><div class="patch-connection-actions"><button class="button is-primary" type="button" data-apply-patch-connection="${escapeHtml(item.id)}">Apply Patch</button><button class="button is-quiet" type="button" data-delete-patch-connection="${escapeHtml(item.id)}">Delete</button></div></article>`;}).join("")}</div>`;
 }
 
-function renderPatchWorkspaceV157(){
-const configuredUrl=patchPilotConfiguredUrlV155();
-if(!configuredUrl)return`<div class="content-stack"><section class="panel patchpilot-connect-panel"><div class="panel-header"><div><h3 class="panel-title">Connect PatchPilot</h3><p class="panel-copy">PatchPilot owns its SSH connection, discovery, validation, backup, patching, and recovery workflow. Connect this console to the PatchPilot application once; no monitoring profile is required.</p></div>${renderBadge("Not connected","neutral")}</div><form class="form" data-patchpilot-settings-form><div class="form-grid"><div class="field field-span-2"><label>PatchPilot Application URL</label><input name="patchPilotUrl" required placeholder="http://patchpilot-host:4129/"><p class="field-hint">Enter the browser-accessible URL of the existing PatchPilot deployment.</p></div></div><div class="modal-footer"><button class="button is-primary" type="submit">Connect</button></div></form></section></div>`;
-return`<div class="content-stack patchpilot-embedded-shell"><section class="panel patchpilot-embedded-panel"><div class="panel-header"><div><h3 class="panel-title">PatchPilot</h3><p class="panel-copy">Use PatchPilot's own Connect step to enter the SSH host, credential, patch type, and server-side patch directory.</p></div><div class="panel-actions">${renderBadge("Connected","accent")}<a class="button is-quiet" href="${escapeHtml(configuredUrl)}" target="_blank" rel="noopener">Open Separately</a></div></div><iframe class="patchpilot-frame" src="${escapeHtml(configuredUrl)}" title="PatchPilot patching workflow" allow="clipboard-read; clipboard-write"></iframe></section></div>`;
+function renderPatchWorkspaceV158(){
+return`<div class="patchpilot-embedded-shell"><iframe class="patchpilot-frame" src="/patchpilot/" title="PatchPilot patching workflow" allow="clipboard-read; clipboard-write"></iframe></div>`;
 }
 
 renderSidebar=function(){
@@ -2556,11 +2554,15 @@ refs.sidebarNav.innerHTML=`<p class="nav-heading">PatchPilot</p><button class="n
 };
 currentPageMeta=function(){
 if(state.appMode!=="patchpilot")return currentPageMetaBeforeV155();
-return{breadcrumb:"PatchPilot / Connect",title:"Patch Management",copy:"Discover, validate, back up, apply, and verify Oracle FMW patches through the guided PatchPilot workflow.",statusLabel:patchPilotConfiguredUrlV155()?"Connected":"Setup required",statusTone:patchPilotConfiguredUrlV155()?"success":"warning",generatedAt:"PatchPilot manages its own target connection"};
+return{breadcrumb:"PatchPilot / Connect",title:"Patch Management",copy:"Discover, validate, back up, apply, and verify Oracle FMW patches through the guided PatchPilot workflow.",statusLabel:"Built in",statusTone:"success",generatedAt:"PatchPilot manages its own target connection"};
 };
-renderPageContent=function(){return state.appMode==="patchpilot"?renderPatchWorkspaceV157():renderPageContentBeforeV155();};
+renderPageContent=function(){return state.appMode==="patchpilot"?renderPatchWorkspaceV158():renderPageContentBeforeV155();};
+renderGlobalDefaultsPageV131=function(){return renderGlobalDefaultsBeforeV155();};
 const renderBeforeV156=render;
-render=function(){renderBeforeV156();syncAppModeV156();};
+render=function(){
+if(state.appMode==="patchpilot"&&document.querySelector(".patchpilot-frame")){syncAppModeV156();return;}
+renderBeforeV156();syncAppModeV156();
+};
 const changeContextBeforeV156=changeContext;
 changeContext=async function(context){await changeContextBeforeV156(context);if(state.appMode==="patchpilot")await loadPatchConnectionsV156();};
 

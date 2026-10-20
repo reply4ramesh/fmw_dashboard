@@ -3,6 +3,8 @@ server-app/config.json
 dist/
 scratch/
 server-app/__pycache__/
+**/__pycache__/
+*.pyc
 server-app/state/
 server-app/*.log
 state/
@@ -12,3 +14,5 @@ snapshots/
 *.db
 *.sqlite
 *.sqlite-*
+.deploy-key-*
+.known-hosts-*

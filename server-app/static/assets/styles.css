@@ -5664,10 +5664,29 @@ tbody tr:last-child td {
 .patchpilot-frame {
     display: block;
     width: 100%;
-    min-height: 72vh;
-    border: 1px solid var(--border);
-    border-radius: 6px 6px 0 0;
+    min-height: calc(100vh - 158px);
+    border: 0;
     background: #fff;
+}
+
+.is-patchpilot-mode .page-hero {
+    display: none;
+}
+
+.is-patchpilot-mode .workspace-main {
+    padding: 0;
+}
+
+.is-patchpilot-mode .page-content {
+    margin-top: 0;
+}
+
+.is-patchpilot-mode .workspace-shell {
+    grid-template-columns: minmax(0, 1fr);
+}
+
+.is-patchpilot-mode .workspace-sidebar {
+    display: none;
 }
 
 .patchpilot-security-note {

@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>PatchPilot</title>
+    <link rel="stylesheet" href="assets/styles.css?v=1.1.1">
+  </head>
+  <body data-app-theme="redwood">
+    <div class="app-shell">
+      <main class="wizard-shell">
+        <section class="wizard-hero">
+          <div>
+            <p class="page-breadcrumb">Guided Oracle Patching</p>
+            <div class="hero-title-row">
+              <span class="hero-logo hero-logo-crop" aria-hidden="true">
+                <img src="assets/images/patchpilot-logo.png" alt="">
+              </span>
+              <div class="hero-brand-text">
+                <h1>PatchPilot</h1>
+                <p class="hero-tagline">Patch with confidence</p>
+              </div>
+            </div>
+            <p class="page-copy">A step-by-step workflow for SSH discovery, README-aware validation, backup, patching, postinstall, rollback, and startup confirmation.</p>
+          </div>
+          <div class="topbar-actions embedded-actions">
+            <label class="app-theme-control" title="Switch the PatchPilot visual theme">
+              <span>Theme</span>
+              <select id="appThemeSelect" class="app-theme-select" aria-label="Application theme">
+                <option value="redwood">PatchPilot Redwood</option>
+                <option value="weblogic-classic">WebLogic Classic</option>
+                <option value="sr-redwood">SR Redwood Light</option>
+                <option value="hcm-teal">HCM Teal</option>
+                <option value="observability-dark">Observability Dark</option>
+                <option value="analytics-light">Analytics Light</option>
+              </select>
+            </label>
+            <button id="downloadReportButton" class="topbar-tile" type="button" disabled>Report</button>
+            <button id="resetRunButton" class="topbar-tile" type="button">Reset</button>
+          </div>
+        </section>
+
+        <div id="wizardLayout" class="wizard-layout">
+          <aside class="wizard-rail" aria-label="PatchPilot guided steps">
+            <div id="wizardSteps" class="wizard-steps"></div>
+            <section class="panel run-card">
+              <div class="panel-heading">
+                <h2>Run Controls</h2>
+              </div>
+              <label class="toggle-row">
+                <input id="dryRunToggle" type="checkbox" checked>
+                <span>Dry-run commands first</span>
+              </label>
+              <label class="toggle-row">
+                <input id="opatchDebugToggle" type="checkbox">
+                <span>Run OPatch with verbose/debug output</span>
+              </label>
+              <label class="toggle-row">
+                <input id="autoRollbackToggle" type="checkbox" checked>
+                <span>Rollback on conflict/failure</span>
+              </label>
+              <label class="toggle-row">
+                <input id="simulateConflictToggle" type="checkbox">
+                <span>Simulate conflict</span>
+              </label>
+              <div class="status-strip" id="connectionStatus">Ready</div>
+            </section>
+          </aside>
+
+          <section class="wizard-card" aria-live="polite">
+            <div id="stepContent"></div>
+            <div class="wizard-actions">
+              <button id="backButton" class="button button-secondary" type="button">Back</button>
+              <button id="secondaryActionButton" class="button button-secondary" type="button">Run Check</button>
+              <button id="nextButton" class="button button-primary" type="button">Continue</button>
+            </div>
+          </section>
+
+          <section id="monitorPanel" class="panel monitor-panel">
+            <div class="panel-heading">
+              <h2>Live Patch Monitor</h2>
+              <div class="monitor-actions">
+                <span id="monitorState" class="small-pill">Idle</span>
+                <button id="rollbackButton" class="button button-secondary" type="button" disabled>Rollback Patch</button>
+                <button id="clearLogButton" class="button button-secondary" type="button">Clear</button>
+              </div>
+            </div>
+            <div id="activityLog" class="activity-log" aria-live="polite"></div>
+          </section>
+        </div>
+      </main>
+    </div>
+
+    <script src="assets/app.js?v=1.1.1"></script>
+  </body>
+</html>

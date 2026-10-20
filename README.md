@@ -1,5 +1,9 @@
 # FMW Operations Console
 
+## Version 158
+
+Version 158 bundles the complete PatchPilot 1.1.1 application into the FMW Operations Console. Selecting **PatchPilot** opens its SSH and patch-source Connect step immediately, defaults patch type to **Stack Patch Bundle**, and changes the guided left-side workflow for SPB versus other patch types. PatchPilot now runs through the console's own `/patchpilot/` route, so no separate PatchPilot URL or monitoring connection profile is required.
+
 ## Version 157
 
 The product is now named **FMW Operations Console** to represent its monitoring, log analysis, reporting, and guided patching capabilities. The existing `iam-monitoring` package, service, database, and upgrade paths remain unchanged for compatibility.

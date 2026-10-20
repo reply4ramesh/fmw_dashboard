@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 import json
 import base64
+import functools
+import http.client
 import io
 import mimetypes
 import os
@@ -17,6 +19,8 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import ThreadingMixIn
 from urllib.parse import parse_qs, urlparse
 from urllib.request import ProxyHandler, Request, build_opener, urlopen
+
+from patchpilot import server as patchpilot_server
 
 from collector import (
     build_discovered_weblogic_cluster_targets,
@@ -109,6 +113,9 @@ GITHUB_REPO = os.environ.get("IAM_MONITORING_GITHUB_REPO", "fmw_dashboard")
 GITHUB_BRANCH = os.environ.get("IAM_MONITORING_GITHUB_BRANCH", "main")
 UPLOADED_KEY_ROOT = os.path.join(os.path.dirname(DB_PATH), "uploaded_keys")
 PRODUCT_NAME = "FMW Operations Console"
+PATCHPILOT_ROUTE = "/patchpilot"
+PATCHPILOT_HTTPD = None
+PATCHPILOT_THREAD = None
 LEGACY_PRODUCT_NAMES = {
     "Oracle Identity & Access Management Dashboard",
     "FMW Monitoring Dashboard",
@@ -1321,6 +1328,15 @@ class Handler(BaseHTTPRequestHandler):
         path = parsed.path or "/"
         query = parse_qs(parsed.query or "")
 
+        if path == PATCHPILOT_ROUTE:
+            self.send_response(308)
+            self.send_header("Location", PATCHPILOT_ROUTE + "/")
+            self.end_headers()
+            return
+
+        if path.startswith(PATCHPILOT_ROUTE + "/"):
+            return self.proxy_patchpilot()
+
         if path == "/healthz":
             return self.handle_healthz()
 
@@ -1386,6 +1402,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         parsed = urlparse(self.path)
         path = parsed.path or "/"
+
+        if path.startswith(PATCHPILOT_ROUTE + "/"):
+            return self.proxy_patchpilot()
 
         if path == "/api/admin/ssh-keys/upload":
             return self.handle_upload_private_key()
@@ -2072,6 +2091,39 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as exc:
             self.send_json(400, {"error": str(exc)})
 
+    def proxy_patchpilot(self):
+        if PATCHPILOT_HTTPD is None:
+            return self.send_json(503, {"error": "The embedded PatchPilot service is not available."})
+
+        target_path = self.path[len(PATCHPILOT_ROUTE):] or "/"
+        content_length = int(self.headers.get("Content-Length") or 0)
+        body = self.rfile.read(content_length) if content_length else None
+        headers = {}
+        if self.headers.get("Content-Type"):
+            headers["Content-Type"] = self.headers.get("Content-Type")
+
+        connection = http.client.HTTPConnection(
+            "127.0.0.1",
+            PATCHPILOT_HTTPD.server_address[1],
+            timeout=1810,
+        )
+        try:
+            connection.request(self.command, target_path, body=body, headers=headers)
+            response = connection.getresponse()
+            content = response.read()
+            self.send_response(response.status, response.reason)
+            excluded = {"connection", "content-length", "date", "server", "transfer-encoding"}
+            for name, value in response.getheaders():
+                if name.lower() not in excluded:
+                    self.send_header(name, value)
+            self.send_header("Content-Length", str(len(content)))
+            self.end_headers()
+            self.wfile.write(content)
+        except Exception as exc:
+            self.send_json(502, {"error": "Embedded PatchPilot request failed: {0}".format(str(exc))})
+        finally:
+            connection.close()
+
     def handle_file(self, path):
         full_path = os.path.abspath(path)
         if not full_path.startswith(os.path.abspath(STATIC_ROOT)):
@@ -2096,10 +2148,38 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(content)
 
 
+def start_embedded_patchpilot():
+    global PATCHPILOT_HTTPD, PATCHPILOT_THREAD
+    if PATCHPILOT_HTTPD is not None:
+        return
+    handler = functools.partial(
+        patchpilot_server.PatchScopeHandler,
+        directory=str(patchpilot_server.ROOT),
+    )
+    PATCHPILOT_HTTPD = patchpilot_server.ReusableTCPServer(("127.0.0.1", 0), handler)
+    PATCHPILOT_THREAD = threading.Thread(
+        target=PATCHPILOT_HTTPD.serve_forever,
+        name="embedded-patchpilot",
+        daemon=True,
+    )
+    PATCHPILOT_THREAD.start()
+    print(
+        "Embedded PatchPilot listening on http://127.0.0.1:{0}".format(
+            PATCHPILOT_HTTPD.server_address[1]
+        )
+    )
+
+
 def main():
+    start_embedded_patchpilot()
     httpd = ThreadingHTTPServer((HOST, PORT), Handler)
-    print("IAM dashboard listening on http://{0}:{1}".format(HOST, PORT))
-    httpd.serve_forever()
+    print("FMW Operations Console listening on http://{0}:{1}".format(HOST, PORT))
+    try:
+        httpd.serve_forever()
+    finally:
+        if PATCHPILOT_HTTPD is not None:
+            PATCHPILOT_HTTPD.shutdown()
+            PATCHPILOT_HTTPD.server_close()
 
 
 if __name__ == "__main__":
