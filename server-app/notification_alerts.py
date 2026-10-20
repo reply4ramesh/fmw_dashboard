@@ -100,7 +100,7 @@ def _recipient_matches(recipient, severity):
 
 def _send_mail(settings, recipients, subject, body):
     message = EmailMessage()
-    sender_name = settings.get("senderName") or "FMW Monitoring Dashboard"
+    sender_name = settings.get("senderName") or "FMW Operations Console"
     sender_email = settings.get("senderEmail") or settings.get("smtpUsername") or ""
     message["Subject"] = subject
     message["From"] = "{0} <{1}>".format(sender_name, sender_email)
@@ -168,7 +168,7 @@ def send_environment_alerts(db_path, environment, dashboard, progress=None):
     environment_name = environment.get("name") or environment.get("id") or "environment"
     subject = "FMW Dashboard {0}: {1}".format(severity.upper(), environment_name)
     body_lines = [
-        "FMW Monitoring Dashboard detected {0} alert(s).".format(len(events)),
+        "FMW Operations Console detected {0} alert(s).".format(len(events)),
         "",
         "Environment: {0}".format(environment_name),
         "Status: {0}".format((dashboard or {}).get("status") or severity),

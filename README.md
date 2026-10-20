@@ -1,4 +1,10 @@
-# FMW Monitoring Dashboard
+# FMW Operations Console
+
+## Version 157
+
+The product is now named **FMW Operations Console** to represent its monitoring, log analysis, reporting, and guided patching capabilities. The existing `iam-monitoring` package, service, database, and upgrade paths remain unchanged for compatibility.
+
+PatchPilot no longer creates or inherits dashboard environment profiles. The PatchPilot mode connects to the existing PatchPilot application and embeds its own SSH and patch-source Connect workflow directly in the console, with an **Open Separately** fallback.
 
 ## Version 156
 

@@ -8,7 +8,7 @@ DEFAULT_NOTIFICATION_SETTINGS = {
     "smtpPort": 587,
     "smtpUsername": "",
     "smtpPassword": "",
-    "senderName": "FMW Monitoring Dashboard",
+    "senderName": "FMW Operations Console",
     "senderEmail": "",
     "securityMode": "starttls",
     "enabled": False,

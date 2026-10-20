@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PRODUCT_NAME="FMW Monitoring Dashboard"
+PRODUCT_NAME="FMW Operations Console"
 PRODUCT_SLUG="iam-monitoring"
 SERVICE_NAME="iam-monitoring"
 UPGRADE_SERVICE_NAME="iam-monitoring-upgrader"

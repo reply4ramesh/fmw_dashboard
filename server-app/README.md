@@ -1,4 +1,4 @@
-# FMW Monitoring Dashboard Server
+# FMW Operations Console Server
 
 This directory contains the IAM monitoring dashboard server, administration API, Linux installer, scheduler, and upgrade utilities.
 

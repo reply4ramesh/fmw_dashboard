@@ -108,9 +108,10 @@ GITHUB_OWNER = os.environ.get("IAM_MONITORING_GITHUB_OWNER", "reply4ramesh")
 GITHUB_REPO = os.environ.get("IAM_MONITORING_GITHUB_REPO", "fmw_dashboard")
 GITHUB_BRANCH = os.environ.get("IAM_MONITORING_GITHUB_BRANCH", "main")
 UPLOADED_KEY_ROOT = os.path.join(os.path.dirname(DB_PATH), "uploaded_keys")
-PRODUCT_NAME = "FMW Monitoring Dashboard"
+PRODUCT_NAME = "FMW Operations Console"
 LEGACY_PRODUCT_NAMES = {
     "Oracle Identity & Access Management Dashboard",
+    "FMW Monitoring Dashboard",
 }
 
 
@@ -1276,11 +1277,11 @@ def send_notification_test(db_path, payload):
 
     message = EmailMessage()
     sender_name = normalize_product_name(settings.get("senderName"))
-    message["Subject"] = "FMW Monitoring Dashboard notification test"
+    message["Subject"] = "FMW Operations Console notification test"
     message["From"] = "{0} <{1}>".format(sender_name, settings.get("senderEmail"))
     message["To"] = target_email
     message.set_content(
-        "This is a test email from FMW Monitoring Dashboard.\n\n"
+        "This is a test email from FMW Operations Console.\n\n"
         "If you received this message, the SMTP configuration is working."
     )
 

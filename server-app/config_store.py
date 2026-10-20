@@ -631,7 +631,7 @@ def default_environment(name=None, host=None):
 
 def default_config():
     return {
-        "dashboard_title": "FMW Monitoring Dashboard",
+        "dashboard_title": "FMW Operations Console",
         "monitoring_server": {
             "name": "IAM Monitoring Server",
             "host": "localhost",

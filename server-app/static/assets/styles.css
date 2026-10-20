@@ -5646,6 +5646,30 @@ tbody tr:last-child td {
     .app-mode-switch { order: 3; }
 }
 
+.is-patchpilot-mode .topbar-context label,
+.is-patchpilot-mode #context-switcher {
+    display: none;
+}
+
+.patchpilot-connect-panel {
+    max-width: 920px;
+    margin: 0 auto;
+}
+
+.patchpilot-embedded-panel {
+    padding-bottom: 0;
+    overflow: hidden;
+}
+
+.patchpilot-frame {
+    display: block;
+    width: 100%;
+    min-height: 72vh;
+    border: 1px solid var(--border);
+    border-radius: 6px 6px 0 0;
+    background: #fff;
+}
+
 .patchpilot-security-note {
     margin-top: 16px;
     border-left: 4px solid var(--success, #2f6d45);
