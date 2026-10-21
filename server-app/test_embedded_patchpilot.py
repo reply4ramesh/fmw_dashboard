@@ -5,7 +5,7 @@ import shlex
 import sys
 import threading
 import unittest
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 
 APP_PATH = os.path.join(os.path.dirname(__file__), "app.py")
@@ -70,10 +70,10 @@ class EmbeddedPatchPilotTests(unittest.TestCase):
         })
         command = app.patchpilot_server.build_ssh_command(profile, "id -un")
         self.assertIn("customer_ssh@fmw.example.com", command)
-        self.assertEqual(
-            "sudo -n -iu oracle -- sh -lc {0}".format(shlex.quote("id -un")),
-            command[-1],
-        )
+        self.assertIn("sudo -n -iu oracle -- true", command[-1])
+        self.assertIn("sudo -n -iu oracle -- sh -lc", command[-1])
+        self.assertIn("sudo -n su - oracle -c", command[-1])
+        self.assertNotIn("secret", command[-1])
 
     def test_patchpilot_does_not_use_sudo_when_login_is_software_owner(self):
         profile = app.patchpilot_server.ssh_profile({
@@ -99,6 +99,46 @@ class EmbeddedPatchPilotTests(unittest.TestCase):
         )
         self.assertIn("passwordless sudo", message)
         self.assertIn("Test SSH + Path", message)
+
+    def test_embedded_ssh_test_passes_separate_run_as_user_to_executor(self):
+        captured = {}
+        original_run_ssh = app.patchpilot_server.run_ssh
+
+        def fake_run_ssh(profile, script, timeout=None):
+            captured["profile"] = profile
+            captured["script"] = script
+            return (
+                '__PATCHSCOPE_JSON_START__\n'
+                '{"sshOk": true, "host": "fmw.example.com", "user": "oracle", '
+                '"patchPath": {"ok": true, "resolvedPath": "/stage/spb", '
+                '"readmePath": "/stage/spb/README.txt"}}\n'
+                '__PATCHSCOPE_JSON_END__\n'
+            )
+
+        app.patchpilot_server.run_ssh = fake_run_ssh
+        try:
+            request = Request(
+                self.base_url + "/patchpilot/api/ssh/test",
+                data=json.dumps({
+                    "host": "fmw.example.com",
+                    "port": 22,
+                    "user": "customer_ssh",
+                    "runAsUser": "oracle",
+                    "password": "secret",
+                    "patchPath": "/stage/spb",
+                }).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urlopen(request, timeout=5) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        finally:
+            app.patchpilot_server.run_ssh = original_run_ssh
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual("customer_ssh", captured["profile"]["user"])
+        self.assertEqual("oracle", captured["profile"]["runAsUser"])
+        self.assertNotIn("secret", captured["script"])
 
 
 if __name__ == "__main__":

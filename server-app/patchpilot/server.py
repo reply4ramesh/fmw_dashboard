@@ -5420,9 +5420,20 @@ def build_ssh_command(profile, script):
         raise RuntimeError("No SSH client found on the PatchPilot server.")
     run_as_user = str(profile.get("runAsUser") or profile["user"]).strip()
     if run_as_user != profile["user"]:
-        remote_command = "sudo -n -iu %s -- sh -lc %s" % (
-            shlex.quote(run_as_user),
-            shlex.quote(script),
+        quoted_user = shlex.quote(run_as_user)
+        login_command = "sh -lc %s" % shlex.quote(script)
+        direct_run_as = "sudo -n -iu %s -- %s" % (
+            quoted_user,
+            login_command,
+        )
+        root_su_run_as = "sudo -n su - %s -c %s" % (
+            quoted_user,
+            shlex.quote(login_command),
+        )
+        remote_command = "if sudo -n -iu %s -- true >/dev/null 2>&1; then %s; else %s; fi" % (
+            quoted_user,
+            direct_run_as,
+            root_su_run_as,
         )
     else:
         remote_command = "sh -lc " + shlex.quote(script)

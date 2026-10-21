@@ -2,7 +2,7 @@
 
 ## Version 160
 
-Version 160 separates the PatchPilot SSH login account from the Oracle software owner. The Connect step now defaults **Oracle Software Owner / Run Commands As** to `oracle`; when the SSH user differs, PatchPilot validates and runs every remote discovery, backup, patching, rollback, and verification command through passwordless `sudo -n -iu oracle`. Direct SSH as the Oracle owner continues to run without sudo.
+Version 160 separates the PatchPilot SSH login account from the Oracle software owner. The Connect step now defaults **Oracle Software Owner / Run Commands As** to `oracle`; when the SSH user differs, PatchPilot validates and runs every remote discovery, backup, patching, rollback, and verification command through passwordless sudo. It supports both sudoers policies that allow direct execution as `oracle` and the common root-authorized `sudo su - oracle` pattern. Direct SSH as the Oracle owner continues to run without sudo.
 
 ## Version 159
 
