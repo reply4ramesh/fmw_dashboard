@@ -57,10 +57,35 @@ ACTIVE_TARGET_JOBS = {}
 ACTIVE_TARGET_JOB_LOCK = threading.Lock()
 MAX_JOB_OUTPUT = 512 * 1024
 DEFAULT_OPATCH_HEAP_OPTIONS = "-Xmx3072m"
+SUDO_PASSWORD_PROMPT = "__PATCHPILOT_SUDO_PASSWORD__"
 
 
 class JobCancelledError(RuntimeError):
     pass
+
+
+class PasswordPromptResponder(object):
+    def __init__(self, ssh_password="", sudo_password=""):
+        self.ssh_password = ssh_password
+        self.sudo_password = sudo_password
+        self.buffer = b""
+        self.ssh_attempts = 0
+        self.sudo_attempts = 0
+
+    def feed(self, chunk, writer):
+        self.buffer = (self.buffer + (chunk or b""))[-1024:]
+        sudo_marker = SUDO_PASSWORD_PROMPT.encode("ascii")
+        if sudo_marker in self.buffer:
+            if self.sudo_password and self.sudo_attempts < 3:
+                writer((self.sudo_password + "\n").encode("utf-8"))
+                self.sudo_attempts += 1
+            self.buffer = b""
+            return
+        if b"password:" in self.buffer.lower():
+            if self.ssh_password and self.ssh_attempts < 3:
+                writer((self.ssh_password + "\n").encode("utf-8"))
+                self.ssh_attempts += 1
+            self.buffer = b""
 
 
 def ssh_timeout(seconds):
@@ -5174,6 +5199,19 @@ def ssh_profile(body):
     run_as_user = str(body.get("runAsUser") or user).strip()
     port = int(str(body.get("port") or "22").strip())
     password = str(body.get("password") or "")
+    sudo_auth = str(body.get("sudoAuth") or ("separate" if body.get("sudoPassword") else "passwordless")).strip()
+    if sudo_auth not in ("passwordless", "ssh-password", "separate"):
+        raise ValueError("Sudo authentication must use the SSH password, a separate password, or passwordless sudo.")
+    sudo_password = ""
+    if run_as_user != user:
+        if sudo_auth == "ssh-password":
+            sudo_password = password
+            if not sudo_password:
+                raise ValueError("SSH Password is required when Sudo Authentication is set to Use SSH password.")
+        elif sudo_auth == "separate":
+            sudo_password = str(body.get("sudoPassword") or "")
+            if not sudo_password:
+                raise ValueError("Sudo Password is required when Sudo Authentication is set to Separate sudo password.")
     if not host:
         raise ValueError("SSH host is required.")
     if not user:
@@ -5188,6 +5226,8 @@ def ssh_profile(body):
         "runAsUser": run_as_user,
         "port": port,
         "password": password,
+        "sudoAuth": sudo_auth,
+        "sudoPassword": sudo_password,
     }
 
 
@@ -5400,9 +5440,14 @@ def ssh_error_message(output, returncode):
         or "may not run sudo" in lower
     ):
         return (
-            "SSH login succeeded, but passwordless sudo to the configured Oracle software owner failed. "
-            "Ask the system administrator to allow this SSH account to run commands as that user without a password, "
-            "then use Test SSH + Path again."
+            "SSH login succeeded, but sudo to the configured Oracle software owner failed. "
+            "Choose the correct Sudo Authentication option and password, verify that this SSH account is authorized "
+            "to switch to that user, then use Test SSH + Path again."
+        )
+    if "incorrect password attempt" in lower or "sorry, try again" in lower:
+        return (
+            "SSH login succeeded, but the sudo password was rejected or this account is not authorized to switch "
+            "to the configured Oracle software owner. Check the sudo password and sudo policy, then use Test SSH + Path again."
         )
     if "could not resolve hostname" in lower or "name or service not known" in lower:
         return "Host name could not be resolved from the PatchPilot server."
@@ -5428,13 +5473,24 @@ def build_ssh_command(profile, script):
     )
     if run_as_user != profile["user"]:
         quoted_user = shlex.quote(run_as_user)
-        direct_run_as = "%s | sudo -n -iu %s" % (script_pipe, quoted_user)
-        root_su_run_as = "%s | sudo -n su - %s -s /bin/sh" % (script_pipe, quoted_user)
-        remote_command = "if sudo -n -iu %s -- true >/dev/null 2>&1; then %s; else %s; fi" % (
-            quoted_user,
-            direct_run_as,
-            root_su_run_as,
-        )
+        if profile.get("sudoPassword"):
+            sudo = "sudo -p %s" % shlex.quote(SUDO_PASSWORD_PROMPT)
+            direct_run_as = "%s | %s -iu %s" % (script_pipe, sudo, quoted_user)
+            root_su_run_as = "%s | %s su - %s -s /bin/sh" % (script_pipe, sudo, quoted_user)
+            remote_command = "if %s -iu %s -- true 2>/dev/null; then %s; else %s; fi" % (
+                sudo,
+                quoted_user,
+                direct_run_as,
+                root_su_run_as,
+            )
+        else:
+            direct_run_as = "%s | sudo -n -iu %s" % (script_pipe, quoted_user)
+            root_su_run_as = "%s | sudo -n su - %s -s /bin/sh" % (script_pipe, quoted_user)
+            remote_command = "if sudo -n -iu %s -- true >/dev/null 2>&1; then %s; else %s; fi" % (
+                quoted_user,
+                direct_run_as,
+                root_su_run_as,
+            )
     else:
         remote_command = "%s | sh -l" % script_pipe
     base = [
@@ -5447,11 +5503,15 @@ def build_ssh_command(profile, script):
         "UserKnownHostsFile=%s" % KNOWN_HOSTS,
         "-o",
         "ConnectTimeout=%s" % SSH_CONNECT_TIMEOUT,
+    ]
+    if profile.get("sudoPassword"):
+        base.append("-tt")
+    base += [
         "%s@%s" % (profile["user"], profile["host"]),
         remote_command,
     ]
     if profile.get("password"):
-        if sshpass:
+        if sshpass and not profile.get("sudoPassword"):
             return [sshpass, "-p", profile["password"]] + base
         return base[:1] + [
             "-o",
@@ -5479,7 +5539,7 @@ def run_local_command(command, timeout=SSH_QUICK_TIMEOUT, max_output=2 * 1024 * 
     return clean_ssh_output(output)
 
 
-def run_ssh_with_password(command, password, timeout=SSH_QUICK_TIMEOUT, max_output=2 * 1024 * 1024):
+def run_ssh_with_password(command, password, sudo_password="", timeout=SSH_QUICK_TIMEOUT, max_output=2 * 1024 * 1024):
     if pty is None:
         raise RuntimeError("Password SSH requires sshpass or POSIX pty support on the PatchPilot server.")
     pid, fd = pty.fork()
@@ -5487,19 +5547,17 @@ def run_ssh_with_password(command, password, timeout=SSH_QUICK_TIMEOUT, max_outp
         os.execv(command[0], command)
 
     output = b""
-    sent_password = False
+    prompt_responder = PasswordPromptResponder(password, sudo_password)
     deadline = time.time() + timeout
     returncode = None
     try:
         def capture(chunk):
-            nonlocal output, sent_password
+            nonlocal output
             if not chunk:
                 return
             output += chunk
             output = output[-max_output:]
-            if not sent_password and b"password:" in output.lower():
-                os.write(fd, (password + "\n").encode("utf-8"))
-                sent_password = True
+            prompt_responder.feed(chunk, lambda value: os.write(fd, value))
 
         def read_chunk():
             try:
@@ -5556,8 +5614,13 @@ def run_ssh_with_password(command, password, timeout=SSH_QUICK_TIMEOUT, max_outp
 
 def run_ssh(profile, script, timeout=SSH_QUICK_TIMEOUT):
     command = build_ssh_command(profile, script)
-    if profile.get("password") and not shutil.which("sshpass"):
-        return run_ssh_with_password(command, profile["password"], timeout=timeout)
+    if profile.get("sudoPassword") or (profile.get("password") and not shutil.which("sshpass")):
+        return run_ssh_with_password(
+            command,
+            profile.get("password") or "",
+            sudo_password=profile.get("sudoPassword") or "",
+            timeout=timeout,
+        )
     return run_local_command(command, timeout=timeout)
 
 
@@ -5628,7 +5691,7 @@ def run_local_command_stream(command, timeout=SSH_QUICK_TIMEOUT, on_chunk=None, 
             proc.stdout.close()
 
 
-def run_ssh_with_password_stream(command, password, timeout=SSH_QUICK_TIMEOUT, on_chunk=None, max_output=2 * 1024 * 1024, cancel_event=None):
+def run_ssh_with_password_stream(command, password, sudo_password="", timeout=SSH_QUICK_TIMEOUT, on_chunk=None, max_output=2 * 1024 * 1024, cancel_event=None):
     if pty is None:
         raise RuntimeError("Password SSH requires sshpass or POSIX pty support on the PatchPilot server.")
     pid, fd = pty.fork()
@@ -5636,19 +5699,17 @@ def run_ssh_with_password_stream(command, password, timeout=SSH_QUICK_TIMEOUT, o
         os.execv(command[0], command)
 
     output = b""
-    sent_password = False
+    prompt_responder = PasswordPromptResponder(password, sudo_password)
     deadline = time.time() + timeout
     returncode = None
     try:
         def capture(chunk):
-            nonlocal output, sent_password
+            nonlocal output
             if not chunk:
                 return
             output += chunk
             output = output[-max_output:]
-            if not sent_password and b"password:" in output.lower():
-                os.write(fd, (password + "\n").encode("utf-8"))
-                sent_password = True
+            prompt_responder.feed(chunk, lambda value: os.write(fd, value))
             if on_chunk:
                 on_chunk(chunk.decode("utf-8", "replace"))
 
@@ -5715,8 +5776,15 @@ def run_ssh_with_password_stream(command, password, timeout=SSH_QUICK_TIMEOUT, o
 
 def run_ssh_stream(profile, script, timeout=SSH_QUICK_TIMEOUT, on_chunk=None, cancel_event=None):
     command = build_ssh_command(profile, script)
-    if profile.get("password") and not shutil.which("sshpass"):
-        return run_ssh_with_password_stream(command, profile["password"], timeout=timeout, on_chunk=on_chunk, cancel_event=cancel_event)
+    if profile.get("sudoPassword") or (profile.get("password") and not shutil.which("sshpass")):
+        return run_ssh_with_password_stream(
+            command,
+            profile.get("password") or "",
+            sudo_password=profile.get("sudoPassword") or "",
+            timeout=timeout,
+            on_chunk=on_chunk,
+            cancel_event=cancel_event,
+        )
     return run_local_command_stream(command, timeout=timeout, on_chunk=on_chunk, cancel_event=cancel_event)
 
 

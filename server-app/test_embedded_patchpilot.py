@@ -75,6 +75,55 @@ class EmbeddedPatchPilotTests(unittest.TestCase):
         self.assertNotIn("secret", command[-1])
         self.assertNotIn("id -un", command[-1])
 
+    def test_patchpilot_uses_prompted_sudo_without_exposing_password(self):
+        profile = app.patchpilot_server.ssh_profile({
+            "host": "fmw.example.com",
+            "port": 22,
+            "user": "customer_ssh",
+            "runAsUser": "oracle",
+            "password": "ssh-secret",
+            "sudoAuth": "separate",
+            "sudoPassword": "sudo-secret",
+        })
+        command = app.patchpilot_server.build_ssh_command(profile, "id -un")
+        remote_command = command[-1]
+        self.assertIn("-tt", command)
+        self.assertIn("sudo -p", remote_command)
+        self.assertIn("-iu oracle -- true", remote_command)
+        self.assertIn("su - oracle -s /bin/sh", remote_command)
+        self.assertNotIn("ssh-secret", " ".join(command))
+        self.assertNotIn("sudo-secret", " ".join(command))
+        self.assertNotIn("id -un", remote_command)
+
+    def test_patchpilot_can_reuse_ssh_password_for_sudo(self):
+        profile = app.patchpilot_server.ssh_profile({
+            "host": "fmw.example.com",
+            "user": "customer_ssh",
+            "runAsUser": "oracle",
+            "password": "shared-secret",
+            "sudoAuth": "ssh-password",
+        })
+        self.assertEqual("shared-secret", profile["sudoPassword"])
+        self.assertEqual("ssh-password", profile["sudoAuth"])
+
+    def test_patchpilot_requires_password_for_selected_sudo_mode(self):
+        with self.assertRaisesRegex(ValueError, "SSH Password is required"):
+            app.patchpilot_server.ssh_profile({
+                "host": "fmw.example.com",
+                "user": "customer_ssh",
+                "runAsUser": "oracle",
+                "sudoAuth": "ssh-password",
+            })
+
+    def test_patchpilot_answers_split_ssh_and_sudo_prompts_with_the_correct_password(self):
+        writes = []
+        responder = app.patchpilot_server.PasswordPromptResponder("ssh-secret", "sudo-secret")
+        responder.feed(b"customer@host's pass", writes.append)
+        responder.feed(b"word: ", writes.append)
+        responder.feed(b"__PATCHPILOT_SUDO_", writes.append)
+        responder.feed(b"PASSWORD__", writes.append)
+        self.assertEqual([b"ssh-secret\n", b"sudo-secret\n"], writes)
+
     def test_patchpilot_does_not_use_sudo_when_login_is_software_owner(self):
         profile = app.patchpilot_server.ssh_profile({
             "host": "fmw.example.com",
@@ -94,12 +143,12 @@ class EmbeddedPatchPilotTests(unittest.TestCase):
                 "runAsUser": "oracle; id",
             })
 
-    def test_patchpilot_reports_missing_passwordless_sudo_clearly(self):
+    def test_patchpilot_reports_sudo_authentication_failure_clearly(self):
         message = app.patchpilot_server.ssh_error_message(
             "sudo: a password is required",
             1,
         )
-        self.assertIn("passwordless sudo", message)
+        self.assertIn("Sudo Authentication", message)
         self.assertIn("Test SSH + Path", message)
 
     def test_embedded_ssh_test_passes_separate_run_as_user_to_executor(self):

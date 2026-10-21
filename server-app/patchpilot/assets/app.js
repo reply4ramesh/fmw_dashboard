@@ -156,6 +156,8 @@ const state = {
     user: "oracle",
     runAsUser: "oracle",
     password: "",
+    sudoAuth: "ssh-password",
+    sudoPassword: "",
     patchType: "Stack Patch Bundle",
     patchPath: "",
     opatchBundlePath: "",
@@ -407,6 +409,8 @@ function connectionPayload() {
     user: state.form.user,
     runAsUser: state.form.runAsUser,
     password: state.form.password,
+    sudoAuth: state.form.sudoAuth,
+    sudoPassword: state.form.sudoAuth === "separate" ? state.form.sudoPassword : "",
     patchPath: state.form.patchPath
   };
 }
@@ -1930,8 +1934,17 @@ function renderConnectStep() {
       <label class="field"><span>SSH Host or IP</span><input id="hostInput" value="${escapeHtml(state.form.host)}" placeholder="Example: appserver01.example.com or 192.0.2.10"></label>
       <label class="field"><span>SSH Port</span><input id="portInput" value="${escapeHtml(state.form.port)}"></label>
       <label class="field"><span>SSH User</span><input id="userInput" value="${escapeHtml(state.form.user)}"></label>
-      <label class="field"><span>SSH Password</span><input id="passwordInput" class="secret-input" type="text" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore="true" data-form-type="other" placeholder="Not saved" value="${escapeHtml(state.form.password)}"></label>
-      <label class="field"><span>Oracle Software Owner / Run Commands As</span><input id="runAsUserInput" value="${escapeHtml(state.form.runAsUser)}" placeholder="oracle"><small>When different from the SSH user, PatchPilot uses passwordless sudo for every remote command.</small></label>
+      <label class="field"><span>SSH Password</span><input id="passwordInput" class="secret-input" type="password" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore="true" data-form-type="other" placeholder="Not saved" value="${escapeHtml(state.form.password)}"></label>
+      <label class="field"><span>Oracle Software Owner / Run Commands As</span><input id="runAsUserInput" value="${escapeHtml(state.form.runAsUser)}" placeholder="oracle"><small>Patch commands are verified and executed as this operating-system user.</small></label>
+      <label class="field"><span>Sudo Authentication</span>
+        <select id="sudoAuthSelect">
+          <option value="ssh-password" ${state.form.sudoAuth === "ssh-password" ? "selected" : ""}>Use SSH password</option>
+          <option value="separate" ${state.form.sudoAuth === "separate" ? "selected" : ""}>Use separate sudo password</option>
+          <option value="passwordless" ${state.form.sudoAuth === "passwordless" ? "selected" : ""}>Passwordless sudo</option>
+        </select>
+        <small>Used only when the SSH user differs from the Oracle software owner. Passwords are not saved.</small>
+      </label>
+      <label class="field"><span>Sudo Password</span><input id="sudoPasswordInput" class="secret-input" type="password" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore="true" data-form-type="other" placeholder="Not saved" value="${escapeHtml(state.form.sudoPassword)}" ${state.form.sudoAuth === "separate" ? "" : "disabled"}><small>${state.form.sudoAuth === "ssh-password" ? "The SSH password will also be used for sudo." : state.form.sudoAuth === "passwordless" ? "No sudo password will be sent." : "Enter the password required by sudo."}</small></label>
       <label class="field"><span>Patch Type</span>
         <select id="patchTypeSelect">
           ${["One-off", "PSU", "SPU", "CSPU", "BSU", "Bundle Patch", "Stack Patch Bundle"].map((type) => `<option ${type === state.form.patchType ? "selected" : ""}>${escapeHtml(type)}</option>`).join("")}
@@ -4218,7 +4231,7 @@ function bindSpbCommandSettingControls() {
 
 function bindStepEvents(id) {
   if (id === "connect") {
-    ["host", "port", "user", "runAsUser", "password", "patchPath"].forEach((name) => {
+    ["host", "port", "user", "runAsUser", "password", "sudoPassword", "patchPath"].forEach((name) => {
       const node = document.getElementById(`${name}Input`);
       if (node) node.addEventListener("input", () => {
         state.form[name] = node.value;
@@ -4227,7 +4240,7 @@ function bindStepEvents(id) {
         state.completed.delete("connect");
         const resultNode = document.querySelector(".connect-result");
         if (resultNode) resultNode.remove();
-        if (["host", "port", "user", "runAsUser", "password"].includes(name)) {
+        if (["host", "port", "user", "runAsUser", "password", "sudoPassword"].includes(name)) {
           state.discovered = false;
           state.discoveryError = "";
           discoveredHomes = [];
@@ -4252,6 +4265,23 @@ function bindStepEvents(id) {
         }
         renderControls();
       });
+    });
+    const sudoAuthSelect = document.getElementById("sudoAuthSelect");
+    if (sudoAuthSelect) sudoAuthSelect.addEventListener("change", () => {
+      state.form.sudoAuth = sudoAuthSelect.value;
+      state.connected = false;
+      state.connectionResult = null;
+      state.completed.delete("connect");
+      state.discovered = false;
+      state.discoveryError = "";
+      discoveredHomes = [];
+      state.completed.delete("discover");
+      resetAllShutdownGates();
+      state.selectedHomeId = "";
+      state.selectedHomePath = "";
+      resetSpbPhaseState();
+      resetPatchApplyState();
+      render();
     });
     const patchType = document.getElementById("patchTypeSelect");
     if (patchType) patchType.addEventListener("change", () => {

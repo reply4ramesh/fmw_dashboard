@@ -1,5 +1,9 @@
 # FMW Operations Console
 
+## Version 163
+
+Version 163 lets PatchPilot switch from an SSH login account to the Oracle software owner when sudo requires a password. The Connect step supports reusing the SSH password, entering a separate sudo password, or using passwordless sudo. Credentials remain session-only, are answered through the interactive SSH terminal, and are not placed in remote commands, logs, reports, or saved profiles. Both direct `sudo -iu oracle` and `sudo su - oracle` authorization styles remain supported, and Test SSH + Path must verify the effective execution user before patching is enabled.
+
 ## Version 162
 
 Version 162 compresses PatchPilot remote scripts before base64 transport. This keeps large SPBAT phase payloads well below process and SSH command-length limits while preserving the byte-safe sudo and `sudo su - oracle` execution model from version 161.
