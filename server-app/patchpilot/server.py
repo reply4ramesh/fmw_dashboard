@@ -5169,15 +5169,24 @@ def read_json_body(handler):
 def ssh_profile(body):
     host = str(body.get("host") or "").strip()
     user = str(body.get("user") or body.get("username") or "").strip()
+    run_as_user = str(body.get("runAsUser") or user).strip()
     port = int(str(body.get("port") or "22").strip())
     password = str(body.get("password") or "")
     if not host:
         raise ValueError("SSH host is required.")
     if not user:
         raise ValueError("SSH user is required.")
+    if not re.match(r"^[A-Za-z_][A-Za-z0-9_.-]*\$?$", run_as_user):
+        raise ValueError("Run commands as must be a valid operating-system username.")
     if port < 1 or port > 65535:
         raise ValueError("SSH port must be between 1 and 65535.")
-    return {"host": host, "user": user, "port": port, "password": password}
+    return {
+        "host": host,
+        "user": user,
+        "runAsUser": run_as_user,
+        "port": port,
+        "password": password,
+    }
 
 
 def job_oracle_home(body):
@@ -5381,6 +5390,18 @@ def ssh_error_message(output, returncode):
         if "publickey" in lower or "password" in lower or "keyboard-interactive" in lower or "please try again" in lower:
             return "SSH permission denied. Check the username/password for the selected host."
         return "Target command permission denied. Review remote file and directory permissions for the selected operation."
+    if (
+        "a password is required" in lower
+        or "no tty present" in lower
+        or "not in the sudoers" in lower
+        or "not allowed to execute" in lower
+        or "may not run sudo" in lower
+    ):
+        return (
+            "SSH login succeeded, but passwordless sudo to the configured Oracle software owner failed. "
+            "Ask the system administrator to allow this SSH account to run commands as that user without a password, "
+            "then use Test SSH + Path again."
+        )
     if "could not resolve hostname" in lower or "name or service not known" in lower:
         return "Host name could not be resolved from the PatchPilot server."
     if "connection timed out" in lower or "operation timed out" in lower:
@@ -5397,7 +5418,14 @@ def build_ssh_command(profile, script):
     sshpass = shutil.which("sshpass")
     if not ssh:
         raise RuntimeError("No SSH client found on the PatchPilot server.")
-    remote_command = "sh -lc " + shlex.quote(script)
+    run_as_user = str(profile.get("runAsUser") or profile["user"]).strip()
+    if run_as_user != profile["user"]:
+        remote_command = "sudo -n -iu %s -- sh -lc %s" % (
+            shlex.quote(run_as_user),
+            shlex.quote(script),
+        )
+    else:
+        remote_command = "sh -lc " + shlex.quote(script)
     base = [
         ssh,
         "-p",

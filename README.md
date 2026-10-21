@@ -1,5 +1,9 @@
 # FMW Operations Console
 
+## Version 160
+
+Version 160 separates the PatchPilot SSH login account from the Oracle software owner. The Connect step now defaults **Oracle Software Owner / Run Commands As** to `oracle`; when the SSH user differs, PatchPilot validates and runs every remote discovery, backup, patching, rollback, and verification command through passwordless `sudo -n -iu oracle`. Direct SSH as the Oracle owner continues to run without sudo.
+
 ## Version 159
 
 Version 159 makes the embedded PatchPilot static-file handler compatible with the Python 3.6 runtime used by existing FMW Operations Console installations. This fixes the `Remote end closed connection without response` error when opening the PatchPilot tab after upgrading to version 158.

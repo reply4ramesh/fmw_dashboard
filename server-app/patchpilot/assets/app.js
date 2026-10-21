@@ -154,6 +154,7 @@ const state = {
     host: "",
     port: "22",
     user: "oracle",
+    runAsUser: "oracle",
     password: "",
     patchType: "Stack Patch Bundle",
     patchPath: "",
@@ -404,6 +405,7 @@ function connectionPayload() {
     host: state.form.host,
     port: state.form.port,
     user: state.form.user,
+    runAsUser: state.form.runAsUser,
     password: state.form.password,
     patchPath: state.form.patchPath
   };
@@ -1929,6 +1931,7 @@ function renderConnectStep() {
       <label class="field"><span>SSH Port</span><input id="portInput" value="${escapeHtml(state.form.port)}"></label>
       <label class="field"><span>SSH User</span><input id="userInput" value="${escapeHtml(state.form.user)}"></label>
       <label class="field"><span>SSH Password</span><input id="passwordInput" class="secret-input" type="text" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-lpignore="true" data-1p-ignore="true" data-form-type="other" placeholder="Not saved" value="${escapeHtml(state.form.password)}"></label>
+      <label class="field"><span>Oracle Software Owner / Run Commands As</span><input id="runAsUserInput" value="${escapeHtml(state.form.runAsUser)}" placeholder="oracle"><small>When different from the SSH user, PatchPilot uses passwordless sudo for every remote command.</small></label>
       <label class="field"><span>Patch Type</span>
         <select id="patchTypeSelect">
           ${["One-off", "PSU", "SPU", "CSPU", "BSU", "Bundle Patch", "Stack Patch Bundle"].map((type) => `<option ${type === state.form.patchType ? "selected" : ""}>${escapeHtml(type)}</option>`).join("")}
@@ -4179,6 +4182,7 @@ function renderReportStep() {
       <div><span>Target Home</span><strong class="mono">${escapeHtml(report.selectedHome.oracleHome)}</strong></div>
       <div><span>Patch</span><strong>${escapeHtml(patchLabel)}</strong></div>
       <div><span>Patch Type</span><strong>${escapeHtml(report.patchType)}</strong></div>
+      <div><span>Command Execution User</span><strong>${escapeHtml(report.executionUser || state.form.runAsUser || state.form.user)}</strong></div>
       <div><span>Rollback</span><strong>${report.rollbackAvailable ? "Available" : "Not available"}</strong></div>
     </div>
     <div class="report-preview">
@@ -4214,7 +4218,7 @@ function bindSpbCommandSettingControls() {
 
 function bindStepEvents(id) {
   if (id === "connect") {
-    ["host", "port", "user", "password", "patchPath"].forEach((name) => {
+    ["host", "port", "user", "runAsUser", "password", "patchPath"].forEach((name) => {
       const node = document.getElementById(`${name}Input`);
       if (node) node.addEventListener("input", () => {
         state.form[name] = node.value;
@@ -4223,7 +4227,7 @@ function bindStepEvents(id) {
         state.completed.delete("connect");
         const resultNode = document.querySelector(".connect-result");
         if (resultNode) resultNode.remove();
-        if (["host", "port", "user", "password"].includes(name)) {
+        if (["host", "port", "user", "runAsUser", "password"].includes(name)) {
           state.discovered = false;
           state.discoveryError = "";
           discoveredHomes = [];
@@ -4704,7 +4708,7 @@ async function testSsh() {
   state.connectionResult = {
     tone: "info",
     title: "Testing SSH connection",
-    message: `Checking ${state.form.user}@${state.form.host}:${state.form.port} and validating ${state.form.patchPath}.`
+    message: `Checking ${state.form.user}@${state.form.host}:${state.form.port}, execution as ${state.form.runAsUser || state.form.user}, and validating ${state.form.patchPath}.`
   };
   render();
   try {
@@ -4714,7 +4718,8 @@ async function testSsh() {
     const sshTarget = `${state.form.user}@${state.form.host}:${state.form.port}`;
     const remoteUser = validation.user && validation.host ? `${validation.user}@${validation.host}` : sshTarget;
     const details = [
-      { label: "SSH", value: `Verified as ${remoteUser}`, mono: true },
+      { label: "SSH Login", value: sshTarget, mono: true },
+      { label: "Command Execution", value: `Verified as ${remoteUser}`, mono: true },
       { label: "Patch directory", value: patchPath.resolvedPath || state.form.patchPath || "Not provided", mono: true },
       { label: "Directory check", value: patchPath.ok ? "Exists, readable, and searchable" : (patchPath.message || "Failed") },
       { label: "README check", value: patchPath.readmePath ? patchPath.readmePath : "Not found", mono: Boolean(patchPath.readmePath) }
@@ -7650,6 +7655,7 @@ function buildReport(outcome) {
     generatedAt: new Date().toISOString(),
     outcome,
     sshTarget: `${state.form.user}@${state.form.host}:${state.form.port}`,
+    executionUser: state.form.runAsUser || state.form.user,
     patchType: state.form.patchType,
     patchPath: state.form.patchPath,
     readmePath: state.readmePath,
@@ -7903,6 +7909,7 @@ function applyLaunchContext() {
   state.form.host = (params.get("host") || "").trim();
   state.form.port = (params.get("port") || "22").trim() || "22";
   state.form.user = (params.get("user") || "oracle").trim() || "oracle";
+  state.form.runAsUser = (params.get("runAsUser") || "oracle").trim() || "oracle";
   state.form.patchPath = (params.get("patchPath") || "").trim();
   state.form.patchType = allowedPatchTypes.has(patchType) ? patchType : state.form.patchType;
   state.form.customer = (params.get("customer") || "").trim();

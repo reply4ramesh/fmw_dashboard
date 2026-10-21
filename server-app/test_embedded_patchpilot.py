@@ -1,6 +1,7 @@
 import importlib.util
 import json
 import os
+import shlex
 import sys
 import threading
 import unittest
@@ -58,6 +59,46 @@ class EmbeddedPatchPilotTests(unittest.TestCase):
             payload = json.loads(response.read().decode("utf-8"))
         self.assertTrue(payload["ok"])
         self.assertEqual("patchpilot", payload["service"])
+
+    def test_patchpilot_uses_passwordless_sudo_for_separate_software_owner(self):
+        profile = app.patchpilot_server.ssh_profile({
+            "host": "fmw.example.com",
+            "port": 22,
+            "user": "customer_ssh",
+            "runAsUser": "oracle",
+            "password": "secret",
+        })
+        command = app.patchpilot_server.build_ssh_command(profile, "id -un")
+        self.assertIn("customer_ssh@fmw.example.com", command)
+        self.assertEqual(
+            "sudo -n -iu oracle -- sh -lc {0}".format(shlex.quote("id -un")),
+            command[-1],
+        )
+
+    def test_patchpilot_does_not_use_sudo_when_login_is_software_owner(self):
+        profile = app.patchpilot_server.ssh_profile({
+            "host": "fmw.example.com",
+            "user": "oracle",
+            "runAsUser": "oracle",
+        })
+        command = app.patchpilot_server.build_ssh_command(profile, "id -un")
+        self.assertEqual("sh -lc {0}".format(shlex.quote("id -un")), command[-1])
+
+    def test_patchpilot_rejects_unsafe_run_as_user(self):
+        with self.assertRaisesRegex(ValueError, "valid operating-system username"):
+            app.patchpilot_server.ssh_profile({
+                "host": "fmw.example.com",
+                "user": "customer_ssh",
+                "runAsUser": "oracle; id",
+            })
+
+    def test_patchpilot_reports_missing_passwordless_sudo_clearly(self):
+        message = app.patchpilot_server.ssh_error_message(
+            "sudo: a password is required",
+            1,
+        )
+        self.assertIn("passwordless sudo", message)
+        self.assertIn("Test SSH + Path", message)
 
 
 if __name__ == "__main__":
