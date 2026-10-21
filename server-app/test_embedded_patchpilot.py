@@ -1,7 +1,6 @@
 import importlib.util
 import json
 import os
-import shlex
 import sys
 import threading
 import unittest
@@ -71,9 +70,10 @@ class EmbeddedPatchPilotTests(unittest.TestCase):
         command = app.patchpilot_server.build_ssh_command(profile, "id -un")
         self.assertIn("customer_ssh@fmw.example.com", command)
         self.assertIn("sudo -n -iu oracle -- true", command[-1])
-        self.assertIn("sudo -n -iu oracle -- sh -lc", command[-1])
-        self.assertIn("sudo -n su - oracle -c", command[-1])
+        self.assertIn("base64 -d | sudo -n -iu oracle", command[-1])
+        self.assertIn("base64 -d | sudo -n su - oracle -s /bin/sh", command[-1])
         self.assertNotIn("secret", command[-1])
+        self.assertNotIn("id -un", command[-1])
 
     def test_patchpilot_does_not_use_sudo_when_login_is_software_owner(self):
         profile = app.patchpilot_server.ssh_profile({
@@ -82,7 +82,9 @@ class EmbeddedPatchPilotTests(unittest.TestCase):
             "runAsUser": "oracle",
         })
         command = app.patchpilot_server.build_ssh_command(profile, "id -un")
-        self.assertEqual("sh -lc {0}".format(shlex.quote("id -un")), command[-1])
+        self.assertIn("base64 -d | sh -l", command[-1])
+        self.assertNotIn("sudo", command[-1])
+        self.assertNotIn("id -un", command[-1])
 
     def test_patchpilot_rejects_unsafe_run_as_user(self):
         with self.assertRaisesRegex(ValueError, "valid operating-system username"):

@@ -2,6 +2,7 @@
 """Small static server for PatchPilot."""
 
 import http.server
+import base64
 import json
 import os
 import errno
@@ -5419,24 +5420,22 @@ def build_ssh_command(profile, script):
     if not ssh:
         raise RuntimeError("No SSH client found on the PatchPilot server.")
     run_as_user = str(profile.get("runAsUser") or profile["user"]).strip()
+    encoded_script = base64.b64encode(script.encode("utf-8")).decode("ascii")
+    script_pipe = "printf %s %s | base64 -d" % (
+        shlex.quote("%s"),
+        shlex.quote(encoded_script),
+    )
     if run_as_user != profile["user"]:
         quoted_user = shlex.quote(run_as_user)
-        login_command = "sh -lc %s" % shlex.quote(script)
-        direct_run_as = "sudo -n -iu %s -- %s" % (
-            quoted_user,
-            login_command,
-        )
-        root_su_run_as = "sudo -n su - %s -c %s" % (
-            quoted_user,
-            shlex.quote(login_command),
-        )
+        direct_run_as = "%s | sudo -n -iu %s" % (script_pipe, quoted_user)
+        root_su_run_as = "%s | sudo -n su - %s -s /bin/sh" % (script_pipe, quoted_user)
         remote_command = "if sudo -n -iu %s -- true >/dev/null 2>&1; then %s; else %s; fi" % (
             quoted_user,
             direct_run_as,
             root_su_run_as,
         )
     else:
-        remote_command = "sh -lc " + shlex.quote(script)
+        remote_command = "%s | sh -l" % script_pipe
     base = [
         ssh,
         "-p",

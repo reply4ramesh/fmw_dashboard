@@ -1,8 +1,12 @@
 # FMW Operations Console
 
+## Version 161
+
+Version 161 hardens the separate SSH-login and Oracle-owner workflow introduced in version 160. PatchPilot now transports every remote script as base64-decoded standard input so shell variables, heredocs, quotes, and SPBAT arguments survive SSH, sudo, and `su` login-shell boundaries unchanged. Both direct sudo-as-`oracle` policies and the common root-authorized `sudo su - oracle` policy have been validated with the full PatchPilot Python payload on Oracle Linux.
+
 ## Version 160
 
-Version 160 separates the PatchPilot SSH login account from the Oracle software owner. The Connect step now defaults **Oracle Software Owner / Run Commands As** to `oracle`; when the SSH user differs, PatchPilot validates and runs every remote discovery, backup, patching, rollback, and verification command through passwordless sudo. It supports both sudoers policies that allow direct execution as `oracle` and the common root-authorized `sudo su - oracle` pattern. Direct SSH as the Oracle owner continues to run without sudo.
+Version 160 separates the PatchPilot SSH login account from the Oracle software owner. The Connect step now defaults **Oracle Software Owner / Run Commands As** to `oracle`; when the SSH user differs, PatchPilot validates and runs remote commands through passwordless sudo. Direct SSH as the Oracle owner continues to run without sudo.
 
 ## Version 159
 
