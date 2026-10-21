@@ -70,8 +70,8 @@ class EmbeddedPatchPilotTests(unittest.TestCase):
         command = app.patchpilot_server.build_ssh_command(profile, "id -un")
         self.assertIn("customer_ssh@fmw.example.com", command)
         self.assertIn("sudo -n -iu oracle -- true", command[-1])
-        self.assertIn("base64 -d | sudo -n -iu oracle", command[-1])
-        self.assertIn("base64 -d | sudo -n su - oracle -s /bin/sh", command[-1])
+        self.assertIn("base64 -d | gzip -d | sudo -n -iu oracle", command[-1])
+        self.assertIn("base64 -d | gzip -d | sudo -n su - oracle -s /bin/sh", command[-1])
         self.assertNotIn("secret", command[-1])
         self.assertNotIn("id -un", command[-1])
 
@@ -82,7 +82,7 @@ class EmbeddedPatchPilotTests(unittest.TestCase):
             "runAsUser": "oracle",
         })
         command = app.patchpilot_server.build_ssh_command(profile, "id -un")
-        self.assertIn("base64 -d | sh -l", command[-1])
+        self.assertIn("base64 -d | gzip -d | sh -l", command[-1])
         self.assertNotIn("sudo", command[-1])
         self.assertNotIn("id -un", command[-1])
 

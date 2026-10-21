@@ -1,8 +1,12 @@
 # FMW Operations Console
 
+## Version 162
+
+Version 162 compresses PatchPilot remote scripts before base64 transport. This keeps large SPBAT phase payloads well below process and SSH command-length limits while preserving the byte-safe sudo and `sudo su - oracle` execution model from version 161.
+
 ## Version 161
 
-Version 161 hardens the separate SSH-login and Oracle-owner workflow introduced in version 160. PatchPilot now transports every remote script as base64-decoded standard input so shell variables, heredocs, quotes, and SPBAT arguments survive SSH, sudo, and `su` login-shell boundaries unchanged. Both direct sudo-as-`oracle` policies and the common root-authorized `sudo su - oracle` policy have been validated with the full PatchPilot Python payload on Oracle Linux.
+Version 161 hardens the separate SSH-login and Oracle-owner workflow introduced in version 160. PatchPilot now transports every remote script as gzip-compressed, base64-decoded standard input so shell variables, heredocs, quotes, SPBAT arguments, and large phase scripts survive SSH, sudo, and `su` login-shell boundaries unchanged. Both direct sudo-as-`oracle` policies and the common root-authorized `sudo su - oracle` policy have been validated with the full PatchPilot Python payload on Oracle Linux.
 
 ## Version 160
 

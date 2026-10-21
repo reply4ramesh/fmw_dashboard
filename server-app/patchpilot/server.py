@@ -3,6 +3,7 @@
 
 import http.server
 import base64
+import gzip
 import json
 import os
 import errno
@@ -5420,8 +5421,8 @@ def build_ssh_command(profile, script):
     if not ssh:
         raise RuntimeError("No SSH client found on the PatchPilot server.")
     run_as_user = str(profile.get("runAsUser") or profile["user"]).strip()
-    encoded_script = base64.b64encode(script.encode("utf-8")).decode("ascii")
-    script_pipe = "printf %s %s | base64 -d" % (
+    encoded_script = base64.b64encode(gzip.compress(script.encode("utf-8"))).decode("ascii")
+    script_pipe = "printf %s %s | base64 -d | gzip -d" % (
         shlex.quote("%s"),
         shlex.quote(encoded_script),
     )
