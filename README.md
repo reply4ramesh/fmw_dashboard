@@ -1,5 +1,9 @@
 # FMW Operations Console
 
+## Version 166
+
+Version 166 incorporates the PatchPilot customer-review findings. One-off patching now offers a guarded **Batch one-offs - OPatch napply** mode for all discovered patches, selected patch IDs, or a server-side OPatch patch-list file; every selected patch is conflict-checked and verified in `lsinventory`, while automatic single-patch rollback is disabled for batch runs. Completed destructive steps cannot be accidentally rerun from their result screens, cleanup retries are preserved in the report, and an already-empty tmp/cache directory is treated as a successful no-op. SPBAT report collection now validates its phase correctly, reports distinguish service inventory from post-start validation, and shared OAM/OIG homes use the selected SPBAT product instead of changing the report identity from component inventory alone. Responsive PatchPilot layouts keep the workflow, form, and live monitor readable on narrower browser windows. Database backup remains a customer-managed approval gate, and PatchPilot continues to pause for human review at operational boundaries.
+
 ## Version 165
 
 Version 165 determines OUD and OID patch scope from the collected Oracle home inventory instead of the saved profile toggle. When OPatch/viewInventory does not report a WebLogic distribution, the home is treated as standalone and receives only the latest individual OUD or OID bundle-patch recommendation; IDM Stack Patch Bundles are explicitly marked as not applicable. When a WebLogic distribution is present, the normal SPB recommendation remains enabled. The dashboard wording, status badges, and recommended-level details now distinguish standalone bundle patches from SPBs.

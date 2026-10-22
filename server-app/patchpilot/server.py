@@ -2195,7 +2195,7 @@ emit("Starting PatchPilot pre-start tmp/cache cleanup%s." % (" preview" if dry_r
 results = [cleanup_target(target) for target in targets]
 statuses = [item.get("status") for item in results]
 has_failure = any(status in ("failed", "rejected") for status in statuses)
-has_warning = any(status in ("missing", "empty") for status in statuses)
+has_warning = any(status == "missing" for status in statuses)
 if dry_run:
     status = "preview"
 elif has_failure:
@@ -3747,6 +3747,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import time
 
 request = __PATCHSCOPE_SHUTDOWN_JSON__
@@ -4533,22 +4534,59 @@ print("__PATCHSCOPE_JSON_END__")
     return script.replace("__PATCHSCOPE_BACKUP_PREFLIGHT_JSON__", json.dumps(payload))
 
 
+def unique_csv_numbers(value):
+    items = value if isinstance(value, list) else re.split(r"[\s,]+", str(value or ""))
+    result = []
+    for item in items:
+        patch_id = str(item or "").strip()
+        if not patch_id:
+            continue
+        if not re.fullmatch(r"\d{5,}", patch_id):
+            raise ValueError("Patch ids must be numeric and separated by commas or spaces.")
+        if patch_id not in result:
+            result.append(patch_id)
+    return result
+
+
 def build_patch_apply_script(body):
     oracle_home = str(body.get("oracleHome") or "").strip()
     patch_path = str(body.get("patchPath") or "").strip()
     dry_run = bool(body.get("dryRun"))
     debug = bool(body.get("debug"))
+    apply_mode = str(body.get("applyMode") or "single").strip().lower()
+    batch_selection = str(body.get("batchSelection") or "all").strip().lower()
+    batch_patch_ids = unique_csv_numbers(body.get("batchPatchIds"))
+    patch_list_file = str(body.get("patchListFile") or "").strip()
     opatch_heap_options = sanitize_opatch_heap_options(body.get("opatchHeapOptions"))
     if not oracle_home:
         raise ValueError("Selected ORACLE_HOME is required for patch apply.")
     if not patch_path:
         raise ValueError("Patch directory on server is required for patch apply.")
-    payload = {"oracleHome": oracle_home, "patchPath": patch_path, "dryRun": dry_run, "debug": debug, "opatchHeapOptions": opatch_heap_options}
+    if apply_mode not in ("single", "batch"):
+        raise ValueError("Apply mode must be single or batch.")
+    if batch_selection not in ("all", "ids", "file"):
+        raise ValueError("Batch selection must be all, ids, or file.")
+    if apply_mode == "batch" and batch_selection == "ids" and not batch_patch_ids:
+        raise ValueError("Enter at least one numeric patch id for selected-id napply mode.")
+    if apply_mode == "batch" and batch_selection == "file" and not patch_list_file:
+        raise ValueError("Patch-list file is required for patch-list napply mode.")
+    payload = {
+        "oracleHome": oracle_home,
+        "patchPath": patch_path,
+        "dryRun": dry_run,
+        "debug": debug,
+        "applyMode": apply_mode,
+        "batchSelection": batch_selection,
+        "batchPatchIds": batch_patch_ids,
+        "patchListFile": patch_list_file,
+        "opatchHeapOptions": opatch_heap_options,
+    }
     script = r'''
 import json
 import os
 import re
 import subprocess
+import sys
 import time
 
 request = json.loads(__PATCHSCOPE_PATCH_JSON__)
@@ -4556,6 +4594,10 @@ oracle_home = os.path.abspath(str(request.get("oracleHome") or ""))
 patch_path = os.path.abspath(str(request.get("patchPath") or ""))
 dry_run = bool(request.get("dryRun"))
 debug = bool(request.get("debug"))
+apply_mode = str(request.get("applyMode") or "single").strip().lower()
+batch_selection = str(request.get("batchSelection") or "all").strip().lower()
+requested_patch_ids = [str(item) for item in (request.get("batchPatchIds") or []) if re.fullmatch(r"\d{5,}", str(item or ""))]
+patch_list_file = os.path.abspath(str(request.get("patchListFile") or "")) if request.get("patchListFile") else ""
 opatch = os.path.join(oracle_home, "OPatch", "opatch")
 debug_args = ["-verbose", "-debug"] if debug else []
 __PATCHSCOPE_OPATCH_HEAP_HELPER__
@@ -4691,6 +4733,41 @@ def discover_patch_roots(base):
     return unique(roots)
 
 
+def patch_list_paths(path):
+    if not path:
+        return []
+    if not os.path.isfile(path):
+        raise RuntimeError("Patch-list file does not exist: %s" % path)
+    paths = []
+    for line in read_small(path, 1024 * 1024).splitlines():
+        value = line.strip()
+        if not value or value.startswith("#"):
+            continue
+        candidate = value if os.path.isabs(value) else os.path.abspath(os.path.join(os.path.dirname(path), value))
+        if not os.path.isdir(candidate):
+            raise RuntimeError("Patch-list entry is not a directory: %s" % candidate)
+        paths.append(candidate)
+    if not paths:
+        raise RuntimeError("Patch-list file does not contain any patch directories: %s" % path)
+    return unique(paths)
+
+
+def roots_for_patch_ids(roots, patch_ids):
+    wanted = set(patch_ids)
+    selected = []
+    found = set()
+    for root in roots:
+        root_ids = ids_from_metadata(root)
+        matches = wanted.intersection(root_ids)
+        if matches:
+            selected.append(root)
+            found.update(matches)
+    missing = [patch_id for patch_id in patch_ids if patch_id not in found]
+    if missing:
+        raise RuntimeError("Selected patch id(s) were not found under the batch directory: %s" % ", ".join(missing))
+    return unique(selected)
+
+
 def resolve_patch_apply_dir(base, primary_id, patch_ids):
     roots = discover_patch_roots(base)
     if not roots:
@@ -4774,12 +4851,33 @@ primary_patch_id = os.path.basename(patch_path.rstrip(os.sep)) if re.fullmatch(r
 if not primary_patch_id and patch_ids:
     primary_patch_id = patch_ids[0]
 apply_dir, patch_roots = resolve_patch_apply_dir(patch_path, primary_patch_id, patch_ids)
+batch_roots = []
+target_patch_ids = list(patch_ids)
+if apply_mode == "batch":
+    if batch_selection == "file":
+        batch_roots = patch_list_paths(patch_list_file)
+        target_patch_ids = unique([patch_id for root in batch_roots for patch_id in discover_patch_ids(root)])
+    elif batch_selection == "ids":
+        batch_roots = roots_for_patch_ids(patch_roots, requested_patch_ids)
+        target_patch_ids = list(requested_patch_ids)
+    else:
+        batch_roots = list(patch_roots)
+    if not batch_roots:
+        raise RuntimeError("No OPatch patch directories were discovered for batch napply under %s." % patch_path)
+    if not target_patch_ids:
+        raise RuntimeError("PatchPilot could not discover patch ids to verify for batch napply.")
+verification_patch_ids = target_patch_ids if apply_mode == "batch" else patch_ids
 emit("PatchPilot OPatch run started: %s" % time.strftime("%Y-%m-%d %H:%M:%S"))
 emit("Oracle home: %s" % oracle_home)
 emit("Patch directory: %s" % patch_path)
+emit("Apply mode: %s" % ("batch napply" if apply_mode == "batch" else "single apply"))
 emit("Resolved OPatch apply directory: %s" % apply_dir)
 if patch_roots:
     emit("Detected OPatch metadata director%s: %s" % ("y" if len(patch_roots) == 1 else "ies", ", ".join(patch_roots)))
+if apply_mode == "batch":
+    emit("Batch selection: %s" % batch_selection)
+    emit("Batch patch directories: %s" % ", ".join(batch_roots))
+    emit("Batch patch ids selected for verification: %s" % ", ".join(target_patch_ids))
 emit("Dry-run only: %s" % ("yes" if dry_run else "no"))
 emit("OPatch verbose/debug: %s" % ("yes" if debug else "no"))
 emit("OPatch heap options %s: OPATCH_JRE_MEMORY_OPTIONS=%s" % (opatch_heap.get("action"), opatch_heap.get("effective")))
@@ -4796,6 +4894,7 @@ if version_code != 0:
         "applyDir": apply_dir,
         "metadataDirs": patch_roots,
         "patchIds": patch_ids,
+        "targetPatchIds": verification_patch_ids,
         "primaryPatchId": primary_patch_id,
         "opatchVersion": opatch_version,
         "inventoryVerified": False,
@@ -4815,6 +4914,7 @@ if before_code != 0:
         "applyDir": apply_dir,
         "metadataDirs": patch_roots,
         "patchIds": patch_ids,
+        "targetPatchIds": verification_patch_ids,
         "primaryPatchId": primary_patch_id,
         "opatchVersion": opatch_version,
         "inventoryVerified": False,
@@ -4824,12 +4924,12 @@ if before_code != 0:
     emit_payload(payload, before_inventory)
     raise SystemExit(0)
 
-already_found_patch_ids = [patch_id for patch_id in patch_ids if inventory_contains(before_inventory, patch_id)]
-already_verified = bool(primary_patch_id and inventory_contains(before_inventory, primary_patch_id))
-if not primary_patch_id and already_found_patch_ids:
+already_found_patch_ids = [patch_id for patch_id in verification_patch_ids if inventory_contains(before_inventory, patch_id)]
+already_verified = bool(verification_patch_ids) and len(already_found_patch_ids) == len(verification_patch_ids) if apply_mode == "batch" else bool(primary_patch_id and inventory_contains(before_inventory, primary_patch_id))
+if apply_mode != "batch" and not primary_patch_id and already_found_patch_ids:
     already_verified = True
 if already_verified:
-    emit("Patch already exists in OPatch inventory. OPatch apply will be skipped.")
+    emit("Selected patch%s already exist in OPatch inventory. OPatch %s will be skipped." % ("es" if apply_mode == "batch" else "", "napply" if apply_mode == "batch" else "apply"))
     payload = {
         "status": "succeeded",
         "alreadyApplied": True,
@@ -4839,18 +4939,31 @@ if already_verified:
         "applyDir": apply_dir,
         "metadataDirs": patch_roots,
         "patchIds": patch_ids,
+        "targetPatchIds": verification_patch_ids,
         "primaryPatchId": primary_patch_id,
         "opatchVersion": opatch_version,
+        "applyMode": apply_mode,
+        "batchSelection": batch_selection if apply_mode == "batch" else "",
+        "patchListFile": patch_list_file if apply_mode == "batch" and batch_selection == "file" else "",
         "foundPatchIds": already_found_patch_ids or ([primary_patch_id] if primary_patch_id else []),
-        "missingPatchIds": [patch_id for patch_id in patch_ids if patch_id not in already_found_patch_ids],
+        "missingPatchIds": [patch_id for patch_id in verification_patch_ids if patch_id not in already_found_patch_ids],
         "inventoryVerified": True,
-        "message": "Patch is already applied in the selected ORACLE_HOME.",
+        "message": "Selected patches are already applied in the selected ORACLE_HOME." if apply_mode == "batch" else "Patch is already applied in the selected ORACLE_HOME.",
         "inventoryTail": before_inventory[-50000:],
     }
     emit_payload(payload, before_inventory)
     raise SystemExit(0)
 
-conflict_code, conflict_output = run_command([opatch, "prereq", "CheckConflictAgainstOHWithDetail", "-ph", apply_dir] + debug_args, timeout=1800)
+conflict_outputs = []
+conflict_targets = batch_roots if apply_mode == "batch" else [apply_dir]
+conflict_code = 0
+for conflict_target in conflict_targets:
+    target_code, target_output = run_command([opatch, "prereq", "CheckConflictAgainstOHWithDetail", "-ph", conflict_target] + debug_args, timeout=1800)
+    conflict_outputs.append(target_output)
+    if target_code != 0:
+        conflict_code = target_code
+        break
+conflict_output = "\n".join(conflict_outputs)
 if conflict_code != 0:
     payload = {
         "status": "failed",
@@ -4860,8 +4973,11 @@ if conflict_code != 0:
         "applyDir": apply_dir,
         "metadataDirs": patch_roots,
         "patchIds": patch_ids,
+        "targetPatchIds": verification_patch_ids,
         "primaryPatchId": primary_patch_id,
         "opatchVersion": opatch_version,
+        "applyMode": apply_mode,
+        "batchSelection": batch_selection if apply_mode == "batch" else "",
         "inventoryVerified": False,
         "error": "OPatch conflict prerequisite failed.",
         "conflictOutput": conflict_output[-50000:],
@@ -4878,16 +4994,28 @@ if dry_run:
         "applyDir": apply_dir,
         "metadataDirs": patch_roots,
         "patchIds": patch_ids,
+        "targetPatchIds": verification_patch_ids,
         "primaryPatchId": primary_patch_id,
         "opatchVersion": opatch_version,
+        "applyMode": apply_mode,
+        "batchSelection": batch_selection if apply_mode == "batch" else "",
         "inventoryVerified": False,
-        "message": "Dry-run completed. Conflict check passed, but opatch apply was not executed.",
+        "message": "Dry-run completed. Conflict checks passed, but opatch %s was not executed." % ("napply" if apply_mode == "batch" else "apply"),
         "conflictOutput": conflict_output[-50000:],
     }
     emit_payload(payload, conflict_output)
     raise SystemExit(0)
 
-apply_code, apply_output = run_command([opatch, "apply", "-silent"] + debug_args, cwd=apply_dir, timeout=7200)
+if apply_mode == "batch":
+    if batch_selection == "file":
+        apply_command = [opatch, "napply", "-oh", oracle_home, "-phBaseFile", patch_list_file, "-silent"] + debug_args
+    elif batch_selection == "ids":
+        apply_command = [opatch, "napply", patch_path, "-id", ",".join(requested_patch_ids), "-oh", oracle_home, "-silent"] + debug_args
+    else:
+        apply_command = [opatch, "napply", patch_path, "-oh", oracle_home, "-silent"] + debug_args
+    apply_code, apply_output = run_command(apply_command, timeout=7200)
+else:
+    apply_code, apply_output = run_command([opatch, "apply", "-silent"] + debug_args, cwd=apply_dir, timeout=7200)
 if apply_code != 0:
     payload = {
         "status": "failed",
@@ -4897,10 +5025,13 @@ if apply_code != 0:
         "applyDir": apply_dir,
         "metadataDirs": patch_roots,
         "patchIds": patch_ids,
+        "targetPatchIds": verification_patch_ids,
         "primaryPatchId": primary_patch_id,
         "opatchVersion": opatch_version,
+        "applyMode": apply_mode,
+        "batchSelection": batch_selection if apply_mode == "batch" else "",
         "inventoryVerified": False,
-        "error": "OPatch apply failed with return code %s." % apply_code,
+        "error": "OPatch %s failed with return code %s." % ("napply" if apply_mode == "batch" else "apply", apply_code),
         "applyOutput": apply_output[-50000:],
     }
     emit_payload(payload, conflict_output, apply_output)
@@ -4916,25 +5047,28 @@ if after_code != 0:
         "applyDir": apply_dir,
         "metadataDirs": patch_roots,
         "patchIds": patch_ids,
+        "targetPatchIds": verification_patch_ids,
         "primaryPatchId": primary_patch_id,
         "opatchVersion": opatch_version,
         "inventoryVerified": False,
-        "error": "OPatch apply completed, but lsinventory failed after apply.",
+        "error": "OPatch %s completed, but lsinventory failed after apply." % ("napply" if apply_mode == "batch" else "apply"),
         "applyOutput": apply_output[-50000:],
         "inventoryOutput": after_inventory[-50000:],
     }
     emit_payload(payload, conflict_output, apply_output, after_inventory)
     raise SystemExit(0)
 
-found_patch_ids = [patch_id for patch_id in patch_ids if inventory_contains(after_inventory, patch_id)]
-missing_patch_ids = [patch_id for patch_id in patch_ids if patch_id not in found_patch_ids]
+found_patch_ids = [patch_id for patch_id in verification_patch_ids if inventory_contains(after_inventory, patch_id)]
+missing_patch_ids = [patch_id for patch_id in verification_patch_ids if patch_id not in found_patch_ids]
 primary_verified = bool(primary_patch_id and inventory_contains(after_inventory, primary_patch_id))
-inventory_verified = primary_verified if primary_patch_id else bool(found_patch_ids or not patch_ids)
+inventory_verified = not missing_patch_ids and bool(verification_patch_ids) if apply_mode == "batch" else (primary_verified if primary_patch_id else bool(found_patch_ids or not patch_ids))
 
 status = "succeeded" if inventory_verified else "failed"
 error = ""
 if not inventory_verified:
-    if primary_patch_id:
+    if apply_mode == "batch":
+        error = "OPatch napply finished, but these patch ids were not found in lsinventory for %s: %s." % (oracle_home, ", ".join(missing_patch_ids))
+    elif primary_patch_id:
         error = "OPatch apply finished, but patch %s was not found in lsinventory for %s." % (primary_patch_id, oracle_home)
     elif patch_ids:
         error = "OPatch apply finished, but none of the discovered patch ids were found in lsinventory for %s." % oracle_home
@@ -4949,8 +5083,12 @@ payload = {
     "applyDir": apply_dir,
     "metadataDirs": patch_roots,
     "patchIds": patch_ids,
+    "targetPatchIds": verification_patch_ids,
     "primaryPatchId": primary_patch_id,
     "opatchVersion": opatch_version,
+    "applyMode": apply_mode,
+    "batchSelection": batch_selection if apply_mode == "batch" else "",
+    "patchListFile": patch_list_file if apply_mode == "batch" and batch_selection == "file" else "",
     "foundPatchIds": found_patch_ids,
     "missingPatchIds": missing_patch_ids,
     "inventoryVerified": inventory_verified,
@@ -6423,7 +6561,8 @@ def append_patch_job(job_id, text):
 
 def start_patch_apply_job(profile, body):
     job_id = uuid.uuid4().hex
-    operation = "OPatch dry-run" if body.get("dryRun") else "OPatch apply"
+    command_name = "OPatch napply" if str(body.get("applyMode") or "single").lower() == "batch" else "OPatch apply"
+    operation = "%s dry-run" % command_name if body.get("dryRun") else command_name
     target_key = acquire_target_job(profile, body, operation, job_id)
     job = {
         "id": job_id,
@@ -6441,7 +6580,7 @@ def start_patch_apply_job(profile, body):
 
     def worker():
         try:
-            append_patch_job(job_id, "Starting PatchPilot OPatch apply job.\n")
+            append_patch_job(job_id, "Starting PatchPilot %s job.\n" % command_name)
             output = run_ssh_stream(
                 profile,
                 remote_python_command(build_patch_apply_script(body)),
@@ -6751,6 +6890,9 @@ class PatchScopeHandler(http.server.SimpleHTTPRequestHandler):
                 if not log_dir:
                     raise ValueError("SPBAT log directory is required.")
                 phase_log = str(body.get("phaseLog") or "").strip()
+                phase = str(body.get("phase") or "").strip().lower()
+                if phase and phase not in ("prestop", "downtime", "poststart"):
+                    raise ValueError("SPBAT report phase must be prestop, downtime, or poststart.")
                 output = run_ssh(profile, remote_python_command(build_spb_report_script(log_dir, phase_log, phase)), timeout=ssh_timeout(35))
                 payload = parse_discovery_output(output)
                 send_json(self, 200, {"ok": True, "report": payload})

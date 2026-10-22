@@ -93,6 +93,7 @@ const state = {
   spbCleanupApproved: false,
   spbCleanupTargetsText: "",
   spbCleanupResult: null,
+  spbCleanupAttempts: [],
   spbCleanupOutput: "",
   spbCleanupError: "",
   spbCleanupStatus: "idle",
@@ -159,6 +160,10 @@ const state = {
     sudoAuth: "ssh-password",
     sudoPassword: "",
     patchType: "Stack Patch Bundle",
+    applyMode: "single",
+    batchSelection: "all",
+    batchPatchIds: "",
+    patchListFile: "",
     patchPath: "",
     opatchBundlePath: "",
     opatchHeapOptions: DEFAULT_OPATCH_HEAP_OPTIONS,
@@ -244,6 +249,26 @@ function isStackPatchBundle() {
   return isSpbPatchTypeLabel(state.form.patchType) || pathIndicatesSpbat(state.form.patchPath);
 }
 
+function isBatchNapply() {
+  return !isStackPatchBundle() && state.form.patchType === "One-off" && state.form.applyMode === "batch";
+}
+
+function patchApplyCommandLabel() {
+  return isBatchNapply() ? "OPatch napply" : "OPatch apply";
+}
+
+function batchNapplyCommand(home = selectedHome(), debugArgs = "") {
+  const opatch = `${home.oracleHome}/OPatch/opatch`;
+  if (state.form.batchSelection === "file") {
+    return `${opatch} napply -oh ${home.oracleHome} -phBaseFile ${state.form.patchListFile} -silent${debugArgs}`;
+  }
+  if (state.form.batchSelection === "ids") {
+    const ids = String(state.form.batchPatchIds || "").trim().replace(/\s+/g, ",");
+    return `${opatch} napply ${state.form.patchPath} -id ${ids} -oh ${home.oracleHome} -silent${debugArgs}`;
+  }
+  return `${opatch} napply ${state.form.patchPath} -oh ${home.oracleHome} -silent${debugArgs}`;
+}
+
 function workflowSteps() {
   return isStackPatchBundle() ? spbSteps : standardSteps;
 }
@@ -299,6 +324,16 @@ function selectedHome() {
     return discoveredHomes[0];
   }
   return emptySelectedHome();
+}
+
+function reportSelectedHome() {
+  const home = selectedHome();
+  if (!isStackPatchBundle()) return { ...home };
+  return {
+    ...home,
+    detectedProduct: home.product || home.label || "",
+    product: spbInstallType().toUpperCase()
+  };
 }
 
 function homePathKey(path) {
@@ -717,12 +752,16 @@ function uniqueValues(items) {
 
 function suggestedSpbTypes() {
   const home = selectedHome();
-  const text = `${home.product || ""} ${home.label || ""} ${home.oracleHome || ""}`.toLowerCase();
+  const domainText = `${home.domainHome || ""}`.toLowerCase();
+  const text = `${home.product || ""} ${home.label || ""} ${home.oracleHome || ""} ${domainText}`.toLowerCase();
   const values = [];
   const hasOig = /\boig\b|\boim\b|identity\s+governance|oracle\s+identity\s+manager/.test(text);
   const hasOam = /\boam\b|access\s+manager/.test(text);
-  if (hasOig) values.push("oig");
-  else if (hasOam) values.push("oam");
+  if (/\boam(?:_|-)?domain\b|\/oam(?:_|-)?domain\b/.test(domainText)) values.push("oam");
+  else if (/\b(?:oig|oim)(?:_|-)?domain\b|\/(?:oig|oim)(?:_|-)?domain\b/.test(domainText)) values.push("oig");
+  else if (hasOig && !hasOam) values.push("oig");
+  else if (hasOam && !hasOig) values.push("oam");
+  else if (hasOam && hasOig) values.push("oam", "oig");
   if (text.includes("oud")) values.push("oud");
   if (text.includes("oid")) values.push("oid");
   if (!hasOig && hasOam && !values.includes("oam")) values.push("oam");
@@ -913,6 +952,7 @@ function resetSpbCleanupState(options = {}) {
   state.spbCleanupApproved = false;
   if (!options.keepTargets) state.spbCleanupTargetsText = "";
   state.spbCleanupResult = null;
+  state.spbCleanupAttempts = [];
   state.spbCleanupOutput = "";
   state.spbCleanupError = "";
   state.spbCleanupStatus = "idle";
@@ -1726,6 +1766,16 @@ function commandPreview(options = {}) {
     if (spbInstallType() === "oig") commands.push(oigScriptCommand());
     return commands;
   }
+  if (isBatchNapply()) {
+    return [
+      `cd ${state.form.patchPath}`,
+      opatchHeapExportCommand(),
+      `${home.oracleHome}/OPatch/opatch version`,
+      "Run CheckConflictAgainstOHWithDetail for every selected patch directory",
+      batchNapplyCommand(home, debugArgs),
+      `${home.oracleHome}/OPatch/opatch lsinventory`
+    ];
+  }
   return [
     `cd ${patchApplyDir}`,
     opatchHeapExportCommand(),
@@ -1779,7 +1829,7 @@ function secondaryActionLabel(stepId = currentStep().id) {
     spbInactive: spbInactiveDeleteReady() ? (dom.dryRunToggle && dom.dryRunToggle.checked ? "Preview Inactive Cleanup" : "Remove Inactive Patches") : state.spbInactiveCheck ? "Recheck Inactive Patches" : "Check Inactive Patches",
     spbPrestop: state.spbFreshInstallNoDomain ? "Run PreStop Baseline" : "Run PreStop",
     spbDowntime: "Run Downtime",
-    apply: dom.dryRunToggle.checked ? "Run Apply Dry-run" : "Apply Patch",
+    apply: dom.dryRunToggle.checked ? `Run ${patchApplyCommandLabel()} Dry-run` : isBatchNapply() ? "Apply Batch" : "Apply Patch",
     postinstall: isStackPatchBundle() ? state.postinstallDone ? "Cleanup Complete" : spbCleanupDryRunEnabled() ? "Preview Tmp/Cache Cleanup" : "Clear Tmp/Cache" : "Confirm Postinstall",
     restart: state.restartDone ? "Services Started" : "Confirm Services Started",
     spbPoststart: state.spbPoststartDone ? "PostStart Complete" : spbInstallType() === "oig" && state.spbPhaseStatus.poststart === "succeeded" && !state.oigScriptDone ? "Run OIG Script" : "Run PostStart",
@@ -1820,6 +1870,8 @@ function stepActionBlockReason(stepId = currentStep().id) {
   if (stepId === "spbDowntime" && isStackPatchBundle() && !spbInactiveDowntimeReady()) return "Check inactive patches and either remove them or explicitly keep them before SPBAT Downtime.";
   if (stepId === "apply" && !shutdownGateSatisfied("shutdown")) return "Verify shutdown or explicitly accept the shutdown gate before applying the patch.";
   if (stepId === "apply" && (!state.opatchReady || !backupGateComplete())) return `Validate OPatch and complete the backup gate before applying the patch. ${backupGateBlockReason()}`.trim();
+  if (stepId === "apply" && isBatchNapply() && state.form.batchSelection === "ids" && !String(state.form.batchPatchIds || "").trim()) return "Enter the patch IDs to apply with OPatch napply.";
+  if (stepId === "apply" && isBatchNapply() && state.form.batchSelection === "file" && !String(state.form.patchListFile || "").trim()) return "Enter the server-side patch-list file for OPatch napply.";
   if (stepId === "postinstall" && isStackPatchBundle() && !state.spbDowntimeDone) return "Run SPBAT Downtime before confirming pre-start cleanup.";
   if (stepId === "postinstall" && !isStackPatchBundle() && !state.patchApplied) return "Apply the patch before running postinstall.";
   if (stepId === "restart" && isStackPatchBundle() && !state.postinstallDone) return "Complete the tmp/cache cleanup before starting services.";
@@ -1848,6 +1900,7 @@ function renderControls() {
   const showMonitor = shouldShowMonitor(active.id);
   const actionBlockReason = stepActionBlockReason(active.id);
   const opatchAlreadySatisfied = active.id === "opatch" && opatchMeetsReadmeMinimum();
+  const completedReadOnly = state.completed.has(active.id) && ["spbPrestop", "spbDowntime", "spbPoststart", "postinstall", "apply", "backup"].includes(active.id);
   if (dom.stepTitle) dom.stepTitle.textContent = active.title;
   if (dom.stepHint) dom.stepHint.textContent = active.hint;
   dom.wizardLayout.classList.toggle("is-monitor-hidden", !showMonitor);
@@ -1857,10 +1910,22 @@ function renderControls() {
   const reportBuilt = Boolean(state.report);
   dom.nextButton.disabled = state.running || (!isReportStep && (!canContinue() || state.activeStep === steps.length - 1)) || (isReportStep && !reportBuilt);
   dom.nextButton.textContent = isReportStep ? "Start Another Patch" : state.activeStep === steps.length - 2 ? "Finish" : "Continue";
-  dom.secondaryActionButton.disabled = state.running || Boolean(actionBlockReason) || opatchAlreadySatisfied;
-  dom.secondaryActionButton.title = opatchAlreadySatisfied ? "Current OPatch already meets the README minimum. Continue to the next step." : actionBlockReason;
+  dom.secondaryActionButton.disabled = state.running || Boolean(actionBlockReason) || opatchAlreadySatisfied || completedReadOnly;
+  dom.secondaryActionButton.title = completedReadOnly
+    ? "This step is complete. Review its result or continue; completed commands are not rerun from the result view."
+    : opatchAlreadySatisfied
+      ? "Current OPatch already meets the README minimum. Continue to the next step."
+      : actionBlockReason;
   dom.downloadReportButton.disabled = !(state.report && state.report.outcome === currentReportOutcome() && !state.rollbackInProgress);
   dom.rollbackButton.disabled = state.running || !rollbackAvailableForCurrentRun();
+  if (dom.autoRollbackToggle) {
+    const batchMode = isBatchNapply();
+    if (batchMode) dom.autoRollbackToggle.checked = false;
+    dom.autoRollbackToggle.disabled = state.running || batchMode;
+    dom.autoRollbackToggle.title = batchMode
+      ? "Batch napply rollback requires a reviewed patch-by-patch recovery plan."
+      : "Rollback on conflict/failure";
+  }
 
   const id = active.id;
   dom.secondaryActionButton.textContent = secondaryActionLabel(id);
@@ -1870,6 +1935,7 @@ function rollbackAvailableForCurrentRun() {
   if (isStackPatchBundle()) {
     return state.spbDowntimeDone || state.spbPoststartDone || state.rollbackDone || state.failed.has("spbDowntime") || state.failed.has("spbPoststart");
   }
+  if (isBatchNapply()) return false;
   return state.patchApplied || state.failed.size > 0;
 }
 
@@ -1950,6 +2016,26 @@ function renderConnectStep() {
           ${["One-off", "PSU", "SPU", "CSPU", "BSU", "Bundle Patch", "Stack Patch Bundle"].map((type) => `<option ${type === state.form.patchType ? "selected" : ""}>${escapeHtml(type)}</option>`).join("")}
         </select>
       </label>
+      ${state.form.patchType === "One-off" ? `
+        <label class="field"><span>Application Mode</span>
+          <select id="applyModeSelect">
+            <option value="single" ${state.form.applyMode === "single" ? "selected" : ""}>Single patch - OPatch apply</option>
+            <option value="batch" ${state.form.applyMode === "batch" ? "selected" : ""}>Batch one-offs - OPatch napply</option>
+          </select>
+          <small>Batch mode validates every selected one-off and verifies all patch IDs after napply.</small>
+        </label>
+      ` : ""}
+      ${state.form.patchType === "One-off" && state.form.applyMode === "batch" ? `
+        <label class="field"><span>Batch Selection</span>
+          <select id="batchSelectionSelect">
+            <option value="all" ${state.form.batchSelection === "all" ? "selected" : ""}>All discovered patch directories</option>
+            <option value="ids" ${state.form.batchSelection === "ids" ? "selected" : ""}>Selected patch IDs</option>
+            <option value="file" ${state.form.batchSelection === "file" ? "selected" : ""}>OPatch patch-list file</option>
+          </select>
+        </label>
+        ${state.form.batchSelection === "ids" ? `<label class="field"><span>Patch IDs</span><input id="batchPatchIdsInput" value="${escapeHtml(state.form.batchPatchIds)}" placeholder="39100536, 39951765, 39987730"><small>Comma- or space-separated numeric patch IDs found below the patch directory.</small></label>` : ""}
+        ${state.form.batchSelection === "file" ? `<label class="field wide"><span>Patch-list File on Target Server</span><input id="patchListFileInput" value="${escapeHtml(state.form.patchListFile)}" placeholder="/u01/stage/OHS/binary_patches/linux64_patchlist.txt"><small>PatchPilot validates every listed directory before passing this file to OPatch -phBaseFile.</small></label>` : ""}
+      ` : ""}
       <label class="field wide"><span>Patch Directory on Target Server</span><input id="patchPathInput" value="${escapeHtml(state.form.patchPath)}" placeholder="Example: /u01/stage/IDM_SPB_14.1.2.1.VERSION"></label>
     </div>
     ${result ? `
@@ -2170,6 +2256,19 @@ function serviceSummary(item) {
     pids: Array.isArray(item.pids) ? item.pids : [],
     shutdownHint: item.shutdownHint || "Use the product stop script for the selected domain/home."
   };
+}
+
+function reportServiceInventory(report) {
+  const services = report && report.selectedHome && Array.isArray(report.selectedHome.services) ? report.selectedHome.services : [];
+  const names = uniqueValues(services.map((item) => serviceSummary(item).service));
+  return names.length ? names.join(", ") : "No service inventory captured";
+}
+
+function reportServiceValidation(report) {
+  if (report.servicesUpVerified) return "Automated services-up verification passed";
+  if (report.servicesUpManualAccepted) return "Services-up state accepted manually";
+  if (report.restartDone && report.startupConfirmed) return "Startup confirmed by the operator";
+  return "Not performed";
 }
 
 function shutdownGroup(service) {
@@ -3194,7 +3293,7 @@ function renderSpbCleanupResultCards() {
     <div class="backup-result-list cleanup-result-list" aria-label="Tmp cache cleanup results">
       ${result.targets.map((item) => {
         const failed = item.status === "failed" || item.status === "rejected";
-        const warning = item.status === "missing" || item.status === "preview" || item.status === "empty";
+        const warning = item.status === "missing" || item.status === "preview";
         const tone = failed ? "is-danger" : warning ? "is-warning" : "is-good";
         return `
           <article class="backup-result-card cleanup-result-card ${tone}">
@@ -3236,6 +3335,7 @@ function renderApplyStep() {
   const latestOpatchLog = currentOpatchLogLocation();
   const estimate = patchDurationEstimate();
   const progressPhase = patchProgressLabel();
+  const applyLabel = patchApplyCommandLabel();
   const statusClass = state.rollbackDone ? "is-good" : state.patchApplied ? "is-good" : failed ? "is-danger" : dryRunDone ? dryRunStillEnabled ? "is-warning" : "is-good" : "";
   const title = state.rollbackDone
     ? rollback && rollback.alreadyRolledBack ? "Patch already rolled back and verified" : "Patch rolled back and verified"
@@ -3252,15 +3352,15 @@ function renderApplyStep() {
       : "OPatch rollback completed and lsinventory confirmed the patch id is no longer present."
     : state.patchApplied
     ? result && result.alreadyApplied
-      ? "PatchPilot found the patch id in OPatch inventory for the selected ORACLE_HOME, so OPatch apply was skipped."
-      : "OPatch apply completed and lsinventory confirmed the patch id in the selected ORACLE_HOME."
+      ? `PatchPilot found every expected patch id in OPatch inventory for the selected ORACLE_HOME, so ${applyLabel} was skipped.`
+      : `${applyLabel} completed and lsinventory confirmed every expected patch id in the selected ORACLE_HOME.`
     : failed
       ? (result && result.error) || "Review the OPatch output before retrying."
       : dryRunDone
         ? dryRunStillEnabled
-          ? "Conflict check passed, but Dry-run commands first is checked. Uncheck dry-run and click Apply Patch when you are ready to apply the patch."
+          ? `Conflict checks passed, but Dry-run commands first is checked. Uncheck dry-run and click Apply Patch when you are ready to run ${applyLabel}.`
           : "Conflict check passed and Dry-run commands first is now unchecked. Click Apply Patch to apply this patch to the selected ORACLE_HOME."
-        : "PatchPilot checks conflicts, runs OPatch apply when dry-run is off, then verifies lsinventory before marking this complete.";
+        : `PatchPilot checks every selected patch for conflicts, runs ${applyLabel} when dry-run is off, then verifies all expected patch IDs in lsinventory before marking this complete.`;
   return `
     <div class="step-heading">
       <p class="page-breadcrumb">Patch Execution</p>
@@ -3307,13 +3407,16 @@ function renderApplyStep() {
     ${result ? `
       <div class="detail-grid">
         <div><span>Patch source</span><strong class="mono">${escapeHtml(result.patchPath || state.form.patchPath)}</strong></div>
+        <div><span>Application mode</span><strong>${escapeHtml(result.applyMode === "batch" || isBatchNapply() ? "Batch one-offs - OPatch napply" : "Single patch - OPatch apply")}</strong></div>
+        ${result.batchSelection ? `<div><span>Batch selection</span><strong>${escapeHtml(result.batchSelection)}</strong></div>` : ""}
+        ${result.patchListFile ? `<div><span>Patch-list file</span><strong class="mono">${escapeHtml(result.patchListFile)}</strong></div>` : ""}
         <div><span>OPatch apply directory</span><strong class="mono">${escapeHtml(result.applyDir || result.patchPath || state.form.patchPath)}</strong></div>
         <div><span>Oracle home</span><strong class="mono">${escapeHtml(result.oracleHome || selectedHome().oracleHome)}</strong></div>
         <div><span>OPatch version</span><strong>${escapeHtml(result.opatchVersion || selectedHome().opatchVersion || "not recorded")}</strong></div>
         <div><span>OPatch heap</span><strong class="mono">${escapeHtml(opatchHeapDisplay(result.opatchHeap))}</strong></div>
         <div><span>OPatch log location</span><strong class="mono">${escapeHtml(currentOpatchLogLocation() || "not reported yet")}</strong></div>
         <div><span>Verbose/debug</span><strong>${state.opatchDebugUsed || result.debug ? "Enabled" : "Disabled"}</strong></div>
-        <div><span>Patch ids expected</span><strong>${escapeHtml((result.patchIds || []).join(", ") || result.primaryPatchId || "not discovered")}</strong></div>
+        <div><span>Patch ids expected</span><strong>${escapeHtml((result.targetPatchIds || result.patchIds || []).join(", ") || result.primaryPatchId || "not discovered")}</strong></div>
         <div><span>Inventory verified</span><strong>${result.inventoryVerified ? "Yes" : "No"}</strong></div>
         ${(result.foundPatchIds || []).length ? `<div><span>Patch ids found</span><strong>${escapeHtml(result.foundPatchIds.join(", "))}</strong></div>` : ""}
         ${(result.missingPatchIds || []).length ? `<div><span>Patch ids missing</span><strong>${escapeHtml(result.missingPatchIds.join(", "))}</strong></div>` : ""}
@@ -3852,6 +3955,23 @@ function reportSpbCleanupTargetRows(report) {
   return rows;
 }
 
+function reportSpbCleanupAttemptRows(report) {
+  const attempts = Array.isArray(report.spbCleanupAttempts) ? report.spbCleanupAttempts : [];
+  return attempts.map((attempt, index) => {
+    const targets = Array.isArray(attempt.targets) ? attempt.targets : [];
+    const cleared = targets.reduce((total, item) => total + Number(item.removedCount || 0), 0);
+    const alreadyEmpty = targets.filter((item) => item.status === "empty").length;
+    return [
+      attempt.attempt || index + 1,
+      attempt.recordedAt || attempt.startedAt || "",
+      attempt.status || "",
+      cleared,
+      alreadyEmpty,
+      attempt.error || ""
+    ];
+  });
+}
+
 function reportSpbInactiveFailure(report) {
   const result = report.spbInactiveResult || {};
   if (report.spbInactiveSkipConfirmed || result.status === "skipped") return false;
@@ -3953,6 +4073,7 @@ function buildReportHtmlBody(report) {
         ["Outcome", report.outcome],
         ["Patch", patchLabel],
         ["Patch Type", reportPatchType(report)],
+        ["Application Mode", report.applyMode === "batch" ? "Batch one-offs - OPatch napply" : isSpbReport ? "SPBAT" : "Single patch - OPatch apply"],
         ["Run ID", report.runId, "mono"],
         ["SSH Target", report.sshTarget, "mono"],
         ["Rollback", report.rollbackAvailable ? "Available" : "Not available"]
@@ -3960,12 +4081,14 @@ function buildReportHtmlBody(report) {
 
       ${reportSection("Target Home", reportGrid([
         ["Product", home.product || home.label],
+        ["Inventory Detection", home.detectedProduct || home.product || home.label],
         ["ORACLE_HOME", home.oracleHome, "mono"],
         ["DOMAIN_HOME", home.domainHome || "Not discovered", "mono"],
         ["INSTANCE_HOME", home.instanceHome || "Not applicable", "mono"],
         ["OPatch Version", home.opatchVersion],
         ["OPatch Heap Options", report.opatchHeapOptions || "", "mono"],
-        ["Services", home.services || "No services recorded"]
+        ["Service Inventory", reportServiceInventory(report)],
+        ["Service Validation", reportServiceValidation(report)]
       ]))}
 
       ${reportSection("README Analysis", `
@@ -4030,6 +4153,7 @@ function buildReportHtmlBody(report) {
         ${reportTable(["Field", "Value"], reportSpbInactiveRows(report))}
         <h5>Pre-start Tmp/Cache Cleanup</h5>
         ${reportTable(["Field", "Value"], reportSpbCleanupRows(report))}
+        ${reportTable(["Attempt", "Recorded", "Status", "Items Cleared", "Already Empty", "Error"], reportSpbCleanupAttemptRows(report), "No cleanup attempts were recorded.")}
         ${reportTable(["Requested Path", "Resolved Directory", "Status", "Items", "Error"], reportSpbCleanupTargetRows(report), "No tmp/cache cleanup paths were recorded.")}
         <h5>Phase Execution</h5>
         ${reportTable(["Phase", "Status", "Phase Log", "Error"], reportSpbRows(report))}
@@ -4286,12 +4410,38 @@ function bindStepEvents(id) {
     const patchType = document.getElementById("patchTypeSelect");
     if (patchType) patchType.addEventListener("change", () => {
       state.form.patchType = patchType.value;
+      if (state.form.patchType !== "One-off") state.form.applyMode = "single";
       state.activeStep = Math.min(state.activeStep, workflowSteps().length - 1);
       resetAllShutdownGates();
       resetBackupPreflight();
       resetDatabaseBackupState();
       resetSpbPhaseState();
       render();
+    });
+    const applyMode = document.getElementById("applyModeSelect");
+    if (applyMode) applyMode.addEventListener("change", () => {
+      state.form.applyMode = applyMode.value;
+      if (isBatchNapply() && dom.autoRollbackToggle) dom.autoRollbackToggle.checked = false;
+      resetPatchApplyState();
+      render();
+    });
+    const batchSelection = document.getElementById("batchSelectionSelect");
+    if (batchSelection) batchSelection.addEventListener("change", () => {
+      state.form.batchSelection = batchSelection.value;
+      resetPatchApplyState();
+      render();
+    });
+    const batchPatchIds = document.getElementById("batchPatchIdsInput");
+    if (batchPatchIds) batchPatchIds.addEventListener("input", () => {
+      state.form.batchPatchIds = batchPatchIds.value;
+      resetPatchApplyState();
+      renderControls();
+    });
+    const patchListFile = document.getElementById("patchListFileInput");
+    if (patchListFile) patchListFile.addEventListener("input", () => {
+      state.form.patchListFile = patchListFile.value;
+      resetPatchApplyState();
+      renderControls();
     });
   }
 
@@ -5488,20 +5638,22 @@ function confirmRollbackDialog(patchId, home, reason) {
 
 function confirmPatchApplyDialog(home, patchLabel) {
   return new Promise((resolve) => {
+    const applyLabel = patchApplyCommandLabel();
     const dialog = document.createElement("dialog");
     dialog.className = "approval-dialog shutdown-dialog";
     dialog.innerHTML = `
       <form method="dialog">
         <div>
           <p class="page-breadcrumb">Apply Confirmation</p>
-          <h2>Are you sure you want to apply patch ${escapeHtml(patchLabel)}?</h2>
+          <h2>Are you sure you want to apply ${escapeHtml(isBatchNapply() ? "the selected one-off patches" : `patch ${patchLabel}`)}?</h2>
         </div>
         <div class="review-box is-danger">
           <strong>Confirm prerequisites before applying</strong>
-          <p>PatchPilot will run OPatch conflict checks, apply this patch to the selected ORACLE_HOME, and verify the patch appears in OPatch inventory.</p>
+          <p>PatchPilot will run conflict checks for every selected patch, execute ${escapeHtml(applyLabel)} against the selected ORACLE_HOME, and verify every expected patch ID in OPatch inventory.</p>
         </div>
         <div class="detail-grid">
           <div><span>Patch</span><strong>${escapeHtml(patchLabel)}</strong></div>
+          <div><span>Application mode</span><strong>${escapeHtml(applyLabel)}</strong></div>
           <div><span>ORACLE_HOME</span><strong class="mono">${escapeHtml(home.oracleHome || "")}</strong></div>
           <div><span>Shutdown</span><strong>${state.shutdownVerified ? "Verified" : state.shutdownOverrideApproved ? "Accepted with override" : "Not verified"}</strong></div>
           <div><span>File backup</span><strong>${state.backupsDone ? "PatchPilot backup complete" : state.backupExternalApproved ? "External backup confirmed" : "Not confirmed"}</strong></div>
@@ -5509,11 +5661,11 @@ function confirmPatchApplyDialog(home, patchLabel) {
         </div>
         <label class="toggle-row decision-row">
           <input id="applyConfirmInput" type="checkbox">
-          <span>I confirm all patch prerequisites are complete, services are stopped, required backups are complete, and PatchPilot should apply this patch.</span>
+          <span>I confirm all patch prerequisites are complete, services are stopped, required backups are complete, and PatchPilot should run ${escapeHtml(applyLabel)}.</span>
         </label>
         <div class="dialog-actions">
           <button class="button button-secondary" value="cancel" type="submit">Cancel</button>
-          <button id="applyConfirmButton" class="button button-primary" value="confirm" type="submit" disabled>Yes, Apply Patch</button>
+          <button id="applyConfirmButton" class="button button-primary" value="confirm" type="submit" disabled>Yes, Run ${escapeHtml(applyLabel)}</button>
         </div>
       </form>
     `;
@@ -6858,6 +7010,7 @@ async function runSpbPhase(phase) {
 async function applyPatch() {
   const dryRun = dom.dryRunToggle.checked;
   const home = selectedHome();
+  const applyLabel = patchApplyCommandLabel();
   if (!shutdownGateSatisfied("shutdown")) {
     const shutdownIndex = workflowSteps().findIndex((step) => step.id === "shutdown");
     if (shutdownIndex >= 0) state.activeStep = shutdownIndex;
@@ -6878,7 +7031,7 @@ async function applyPatch() {
   if (!dryRun) {
     const approved = await confirmPatchApplyDialog(home, completedPatchLabel());
     if (!approved) {
-      log("OPatch apply was cancelled before any patch command was run.");
+      log(`${applyLabel} was cancelled before any patch command was run.`);
       return;
     }
   }
@@ -6899,7 +7052,7 @@ async function applyPatch() {
   state.rollbackOutput = "";
   state.completed.delete("apply");
   state.failed.delete("apply");
-  log(`Starting ${dryRun ? "dry-run " : ""}OPatch flow for ${state.form.patchPath}.`);
+  log(`Starting ${dryRun ? "dry-run " : ""}${applyLabel} flow for ${state.form.patchPath}.`);
   log(`OPatch flow will use OPATCH_JRE_MEMORY_OPTIONS=${opatchHeapOptions()} unless the target already has an equal or higher value.`, "warn");
   if (state.opatchDebugUsed) {
     log("OPatch verbose/debug output is enabled for prereq and apply commands.", "warn");
@@ -6931,11 +7084,15 @@ async function applyPatch() {
         ...connectionPayload(),
         oracleHome: home.oracleHome,
         patchPath: state.form.patchPath,
+        applyMode: isBatchNapply() ? "batch" : "single",
+        batchSelection: state.form.batchSelection,
+        batchPatchIds: state.form.batchPatchIds,
+        patchListFile: state.form.patchListFile,
         dryRun,
         debug: state.opatchDebugUsed,
         opatchHeapOptions: opatchHeapOptions()
       });
-    log(`${dryRun ? "OPatch dry-run" : "OPatch apply"} job started. Tailing remote OPatch output.`);
+    log(`${dryRun ? `${applyLabel} dry-run` : applyLabel} job started. Tailing remote OPatch output.`);
     while (true) {
       await sleep(2000);
       const result = await postJson("api/patch/apply/status", { jobId: start.jobId });
@@ -6949,7 +7106,7 @@ async function applyPatch() {
       }
       const previousOpatchLog = currentOpatchLogLocation();
       state.patchApplyOutput = output;
-      logCommandTail(delta, dryRun ? "OPatch dry-run" : "OPatch apply");
+      logCommandTail(delta, dryRun ? `${applyLabel} dry-run` : applyLabel);
       const latestOpatchLog = currentOpatchLogLocation();
       if (latestOpatchLog && latestOpatchLog !== previousOpatchLog) {
         log(`Current OPatch log file: ${latestOpatchLog}.`, "pass");
@@ -6966,7 +7123,7 @@ async function applyPatch() {
           state.patchApplied = false;
           state.completed.delete("apply");
           setStatus("Dry-run passed", "neutral");
-          log("Dry-run completed. Conflict check passed, but OPatch apply was not executed because Dry-run commands first is checked.", "warn");
+          log(`Dry-run completed. Conflict checks passed, but ${applyLabel} was not executed because Dry-run commands first is checked.`, "warn");
         } else if (patch.status === "succeeded" && patch.inventoryVerified) {
           setPatchProgressPhase("complete");
           state.patchApplied = true;
@@ -6982,18 +7139,18 @@ async function applyPatch() {
           state.patchApplied = false;
           state.failed.add("apply");
           setStatus("Apply verification failed", "danger");
-          log(patch.error || "OPatch apply completed, but inventory verification did not pass.", "error");
+          log(patch.error || `${applyLabel} completed, but inventory verification did not pass.`, "error");
         }
         break;
       }
 
       if (job.status === "failed") {
-        state.patchResult = job.patch || buildClientPatchFailureResult(job.error || "OPatch apply failed.", output, dryRun);
+        state.patchResult = job.patch || buildClientPatchFailureResult(job.error || `${applyLabel} failed.`, output, dryRun);
         setPatchProgressPhase("failed");
         state.patchApplied = false;
         state.failed.add("apply");
         setStatus("Patch apply failed", "danger");
-        throw new Error((state.patchResult && state.patchResult.error) || job.error || "OPatch apply failed.");
+        throw new Error((state.patchResult && state.patchResult.error) || job.error || `${applyLabel} failed.`);
       }
     }
   } catch (error) {
@@ -7231,6 +7388,11 @@ async function runPostinstall() {
         dryRun
       });
       const cleanup = result.cleanup || {};
+      state.spbCleanupAttempts.push({
+        ...cleanup,
+        attempt: state.spbCleanupAttempts.length + 1,
+        recordedAt: new Date().toISOString()
+      });
       state.spbCleanupResult = cleanup;
       state.spbCleanupOutput = cleanup.output || "";
       state.spbCleanupStatus = cleanup.dryRun ? "preview" : cleanup.status || "failed";
@@ -7246,7 +7408,7 @@ async function runPostinstall() {
         state.completed.add("postinstall");
         state.failed.delete("postinstall");
         setStatus("Cleanup complete", "good");
-        log(cleanup.status === "partial" ? "Tmp/cache cleanup completed with warnings. Review missing or empty path details before startup." : "Tmp/cache cleanup completed for the listed paths.", cleanup.status === "partial" ? "warn" : "pass");
+          log(cleanup.status === "partial" ? "Tmp/cache cleanup completed with warnings. Review missing path details before startup." : "Tmp/cache cleanup completed for the listed paths.", cleanup.status === "partial" ? "warn" : "pass");
       } else {
         state.postinstallDone = false;
         state.completed.delete("postinstall");
@@ -7544,6 +7706,10 @@ async function runOigPostinstallScript() {
 
 async function runSpbPoststart() {
   const isOig = spbInstallType() === "oig";
+  if (state.spbPoststartDone) {
+    log("SPBAT PostStart is already complete. The completed result is read-only; start a new run if another execution is required.", "warn");
+    return;
+  }
   if (spbPhaseIsRunning("poststart")) {
     log("SPBAT PostStart is already running. Wait for the current phase job to finish before starting another.", "warn");
     return;
@@ -7687,9 +7853,13 @@ function buildReport(outcome) {
     sshTarget: `${state.form.user}@${state.form.host}:${state.form.port}`,
     executionUser: state.form.runAsUser || state.form.user,
     patchType: state.form.patchType,
+    applyMode: isBatchNapply() ? "batch" : "single",
+    batchSelection: isBatchNapply() ? state.form.batchSelection : "",
+    batchPatchIds: isBatchNapply() ? state.form.batchPatchIds : "",
+    patchListFile: isBatchNapply() ? state.form.patchListFile : "",
     patchPath: state.form.patchPath,
     readmePath: state.readmePath,
-    selectedHome: selectedHome(),
+    selectedHome: reportSelectedHome(),
     readmeAnalysis: state.readmeAnalysis || analyzeReadme(state.readmeText),
     opatchHeapOptions: opatchHeapOptions(),
     spbInstallType: isStackPatchBundle() ? spbInstallType() : "",
@@ -7762,6 +7932,7 @@ function buildReport(outcome) {
     spbCleanupTargets: isStackPatchBundle() ? spbCleanupTargets() : [],
     spbCleanupStatus: state.spbCleanupStatus,
     spbCleanupResult: state.spbCleanupResult,
+    spbCleanupAttempts: state.spbCleanupAttempts,
     spbCleanupError: state.spbCleanupError,
     startupConfirmed: state.startupConfirmed,
     startupNote: state.startupNote,

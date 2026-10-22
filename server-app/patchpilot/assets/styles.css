@@ -1236,6 +1236,8 @@ p {
   display: grid;
   gap: 14px;
   min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 .wizard-steps {
@@ -1328,6 +1330,8 @@ p {
 
 .monitor-panel {
   grid-column: 3;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 .wizard-layout.is-monitor-hidden .wizard-card {
@@ -2248,6 +2252,22 @@ p {
   .readme-grid {
     grid-template-columns: 1fr;
   }
+
+  .wizard-layout {
+    grid-template-columns: minmax(220px, 260px) minmax(0, 1fr);
+  }
+
+  .wizard-layout.is-monitor-hidden {
+    grid-template-columns: minmax(220px, 260px) minmax(0, 1fr);
+  }
+
+  .monitor-panel {
+    grid-column: 2;
+  }
+
+  .form-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 1180px) {
@@ -2258,6 +2278,10 @@ p {
 
   .wizard-hero,
   .wizard-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .wizard-layout.is-monitor-hidden {
     grid-template-columns: 1fr;
   }
 
@@ -2281,6 +2305,7 @@ p {
   .wizard-rail {
     grid-column: auto;
     grid-template-columns: 1fr;
+    overflow: visible;
   }
 
   .wizard-card,
