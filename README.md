@@ -1,5 +1,9 @@
 # FMW Operations Console
 
+## Version 164
+
+Version 164 updates patch recommendations to the October 2026 IDM Stack Patch Bundles: Patch `40131416` for 14c (`14.1.2.1.261008`) and Patch `40131601` for 12.2.1.4 (`12.2.1.4.261008`). The catalog includes the current constituent patches and product applicability for OAM, OIG, OUD, and OID. Recommendation matching now recognizes superseded patch IDs even when OPatch reports an installed patch only as `One-off`, shows each applicable update once beside the installed component it replaces, and no longer adds repetitive per-member `Not installed` rows to populated inventories. A detected current SPB is treated as the authoritative bundle level.
+
 ## Version 163
 
 Version 163 lets PatchPilot switch from an SSH login account to the Oracle software owner when sudo requires a password. The Connect step supports reusing the SSH password, entering a separate sudo password, or using passwordless sudo. Credentials remain session-only, are answered through the interactive SSH terminal, and are not placed in remote commands, logs, reports, or saved profiles. Both direct `sudo -iu oracle` and `sudo su - oracle` authorization styles remain supported, and Test SSH + Path must verify the effective execution user before patching is enabled.

@@ -63,7 +63,7 @@ class PatchClassificationTests(unittest.TestCase):
         self.assertEqual(wls_rows[0]["patchId"], "38156117")
         self.assertEqual(wls_rows[0]["recommendationStatus"], "recommended")
 
-    def test_genuinely_missing_patch_uses_real_patch_identity(self):
+    def test_missing_members_do_not_create_redundant_table_rows(self):
         recommendation = build_fmw_patch_recommendation(
             {
                 "patches": [
@@ -79,14 +79,55 @@ class PatchClassificationTests(unittest.TestCase):
             "/refresh/home/mwoam",
         )
 
-        missing_samples = [
-            row
-            for row in recommendation["comparisonRows"]
-            if row.get("isMissingRecommendation") and "WEBLOGIC SAMPLES" in str(row.get("description") or "").upper()
-        ]
-        self.assertEqual(len(missing_samples), 1)
-        self.assertTrue(missing_samples[0]["patchId"])
-        self.assertEqual(missing_samples[0]["appliedOn"], "Not installed")
+        self.assertEqual(len(recommendation["comparisonRows"]), 1)
+        self.assertGreater(len(recommendation["missingPatches"]), 1)
+        self.assertNotIn("Not installed", [row.get("description") for row in recommendation["comparisonRows"]])
+
+    def test_october_catalog_and_superseded_generic_one_off(self):
+        recommendation = build_fmw_patch_recommendation(
+            {
+                "patches": [{"patchId": "39904932", "description": "One-off", "appliedOn": "2026-09-08"}],
+                "versions": [{"key": "Oracle Fusion Middleware", "value": "14.1.2.1.0"}],
+            },
+            {"products": {"oig": True}},
+            "/opt/oracle/IAM14c",
+        )
+
+        self.assertEqual(recommendation["latestPatchId"], "40131416")
+        self.assertEqual(recommendation["comparisonRows"][0]["recommendationStatus"], "recommended")
+        self.assertIn("40068276", recommendation["comparisonRows"][0]["recommendation"])
+
+    def test_current_spb_is_authoritative_and_has_no_missing_members(self):
+        recommendation = build_fmw_patch_recommendation(
+            {
+                "patches": [{"patchId": "40131601", "description": "One-off", "appliedOn": "2026-10-22"}],
+                "versions": [{"key": "Oracle Fusion Middleware", "value": "12.2.1.4.0"}],
+            },
+            {"products": {"oam": True}},
+            "/opt/oracle/middleware12c",
+        )
+
+        self.assertEqual(recommendation["status"], "latest")
+        self.assertEqual(recommendation["missingPatches"], [])
+        self.assertEqual(recommendation["comparisonRows"][0]["recommendation"], "Latest")
+
+    def test_duplicate_category_updates_are_shown_once(self):
+        recommendation = build_fmw_patch_recommendation(
+            {
+                "patches": [
+                    {"patchId": "11111111", "description": "WLS PATCH SET UPDATE 14.1.2.0.250101"},
+                    {"patchId": "22222222", "description": "WLS PATCH SET UPDATE 14.1.2.0.250202"},
+                ],
+                "versions": [{"key": "Oracle Fusion Middleware", "value": "14.1.2.1.0"}],
+            },
+            {"products": {"oig": True}},
+            "/opt/oracle/IAM14c",
+        )
+
+        recommended = [row for row in recommendation["comparisonRows"] if row["recommendationStatus"] == "recommended"]
+        self.assertEqual(len(recommended), 1)
+        self.assertIn("40058371", recommended[0]["recommendation"])
+        self.assertEqual(recommendation["comparisonRows"][1]["recommendation"], "-")
 
 
 if __name__ == "__main__":

@@ -2049,12 +2049,15 @@ def merge_opatch_patch_rows(primary_rows, fallback_rows):
     return rows
 
 
-def _patch_row(description, patch_id, applicability):
-    return {
+def _patch_row(description, patch_id, applicability, supersedes=None):
+    row = {
         "description": description,
         "patchId": str(patch_id),
         "applicability": list(applicability),
     }
+    if supersedes:
+        row["supersedes"] = [str(item) for item in supersedes if str(item).strip()]
+    return row
 
 
 ALL_IDM_COMPONENTS = ["OAM", "OIG", "OUD", "OID"]
@@ -2062,8 +2065,8 @@ DEFAULT_FMW_PATCH_BASELINES = {
     "12c": {
         "family": "12c",
         "version": "12.2.1.4.0",
-        "latestRelease": "September 2026 12.2.1.4.260908 SPB",
-        "latestPatch": _patch_row("IDM STACK PATCH BUNDLE 12.2.1.4.260908", "39990616", ALL_IDM_COMPONENTS),
+        "latestRelease": "October 2026 12.2.1.4.261008 SPB",
+        "latestPatch": _patch_row("IDM STACK PATCH BUNDLE 12.2.1.4.261008", "40131601", ALL_IDM_COMPONENTS, ["39990616"]),
         "patches": [
             _patch_row("MERGE REQUEST ON TOP OF 12.2.1.4.0 FOR BUGS 39465265 39301239", "39726402", ALL_IDM_COMPONENTS),
             _patch_row("OIM 12CPS3 UPGRADE STUCK AT SCHEMAREADINESSQUERIES QUERYINDEXNAMES", "32999272", ALL_IDM_COMPONENTS),
@@ -2101,8 +2104,8 @@ DEFAULT_FMW_PATCH_BASELINES = {
     "14c": {
         "family": "14c",
         "version": "14.1.2.1",
-        "latestRelease": "September 2026 14.1.2.1.260906 SPB",
-        "latestPatch": _patch_row("IDM STACK PATCH BUNDLE 14.1.2.1.260906", "39983554", ALL_IDM_COMPONENTS),
+        "latestRelease": "October 2026 14.1.2.1.261008 SPB",
+        "latestPatch": _patch_row("IDM STACK PATCH BUNDLE 14.1.2.1.261008", "40131416", ALL_IDM_COMPONENTS, ["39983554"]),
         "patches": [
             _patch_row("MERGE REQUEST ON TOP OF 14.1.2.0.0 FOR BUGS 39458344 39301239", "39726399", ALL_IDM_COMPONENTS),
             _patch_row("Unable to Retrieve Request Details by REST Client With End User - Error occurred in routing slip default/DefaultOperationalApproval!5.0/ApprovalTask with message: null.", "37512243", ["OIG"]),
@@ -2153,6 +2156,7 @@ def _normalize_patch_catalog_row(value):
         row.get("description") or row.get("name") or row.get("label") or "",
         row.get("patchId") or row.get("patch") or row.get("patchNumber") or "",
         _normalize_patch_catalog_components(row.get("applicability") or row.get("components") or row.get("appliesTo") or []),
+        row.get("supersedes") or row.get("previousPatchIds") or [],
     )
 
 
@@ -2203,6 +2207,9 @@ def detect_fmw_patch_family(opatch, oracle_home):
     scores = {}
     for family, baseline in FMW_PATCH_BASELINES.items():
         known_ids = {baseline["latestPatch"]["patchId"]} | {item["patchId"] for item in baseline.get("patches") or []}
+        known_ids.update(str(item) for item in baseline.get("latestPatch", {}).get("supersedes") or [])
+        for item in baseline.get("patches") or []:
+            known_ids.update(str(previous) for previous in item.get("supersedes") or [])
         scores[family] = len(installed_ids & known_ids)
     if scores.get("14c", 0) > scores.get("12c", 0):
         return "14c"
@@ -2314,6 +2321,19 @@ def patch_category(description):
     return ""
 
 
+def patch_presentation_classification(description):
+    text = str(description or "").upper()
+    if "WLS PATCH SET UPDATE" in text:
+        return {"patchGroup": "security", "patchGroupLabel": "WebLogic PSU"}
+    if " SPU" in text:
+        return {"patchGroup": "security", "patchGroupLabel": "Security Patch Update"}
+    if "THIRDPARTY BUNDLE PATCH" in text:
+        return {"patchGroup": "security", "patchGroupLabel": "Security Platform Update"}
+    if "SECURITY PATCH UPDATE" in text:
+        return {"patchGroup": "security", "patchGroupLabel": "Security Update"}
+    return {"patchGroup": "product", "patchGroupLabel": "Product / Component"}
+
+
 def patch_version_tokens(description):
     text = str(description or "").upper()
     tokens = set(re.findall(r"\b\d{2}\.\d(?:\.\d+){2,4}\b", text))
@@ -2371,6 +2391,11 @@ def patch_matches_baseline(patch, baseline_item):
     current_tokens = patch_version_tokens(patch.get("description"))
     baseline_tokens = patch_version_tokens(baseline_item.get("description"))
     return bool(current_tokens and baseline_tokens and current_tokens & baseline_tokens)
+
+
+def patch_is_superseded_by(patch, baseline_item):
+    previous_ids = {str(item) for item in baseline_item.get("supersedes") or []}
+    return bool(previous_ids & patch_item_numbers(patch))
 
 
 def recommendation_text(item):
@@ -2444,13 +2469,14 @@ def build_fmw_patch_recommendation(opatch, environment, oracle_home, components=
             ),
             "missingPatches": [latest_missing],
             "comparisonRows": [{
-                "patchId": "",
-                "description": "No bundle patches or Stack Patch Bundle detected",
+                "patchId": latest_patch["patchId"],
+                "description": latest_patch["description"],
                 "appliedOn": "",
                 "recommendation": recommendation_text(latest_missing),
                 "recommendationStatus": "missing",
             }],
         }
+    latest_installed = latest_patch["patchId"] in installed_ids
     matched_required = set()
     comparison_rows = []
     represented_recommendations = set()
@@ -2467,11 +2493,16 @@ def build_fmw_patch_recommendation(opatch, environment, oracle_home, components=
             recommendation = "Latest"
             recommendation_status = "latest"
         else:
-            same_category = by_category.get(patch_category(patch.get("description")))
-            recommendation = recommendation_text(same_category) if same_category else "-"
-            recommendation_status = "recommended" if same_category else "none"
-            if same_category:
+            replacement = next((item for item in required if patch_is_superseded_by(patch, item)), None)
+            if not replacement:
+                replacement = by_category.get(patch_category(patch.get("description")))
+            recommendation = recommendation_text(replacement) if replacement else "-"
+            if replacement and recommendation not in represented_recommendations:
+                recommendation_status = "recommended"
                 represented_recommendations.add(recommendation)
+            else:
+                recommendation = "-"
+                recommendation_status = "none"
         row = dict(patch)
         row["recommendation"] = recommendation
         row["recommendationStatus"] = recommendation_status
@@ -2479,27 +2510,19 @@ def build_fmw_patch_recommendation(opatch, environment, oracle_home, components=
 
     missing = []
     for item in required:
+        if latest_installed:
+            break
         if item["patchId"] in matched_required or item["patchId"] in installed_ids:
             continue
         row = dict(item)
         row["components"] = [component for component in item.get("applicability") or [] if component in components]
         missing.append(row)
-        missing_recommendation = recommendation_text(row)
-        if missing_recommendation not in represented_recommendations:
-            comparison_rows.append({
-                "patchId": "",
-                "description": "Not installed",
-                "appliedOn": "",
-                "recommendation": missing_recommendation,
-                "recommendationStatus": "missing",
-            })
 
     status = "updates_recommended" if missing else "latest"
     message = (
-        "Recommended latest patch level is {0} Patch {1}. Missing relevant patch count: {2}.".format(
+        "Recommended latest patch level is {0} Patch {1}. Apply the SPB as a unit; the installed rows below show each applicable component update once.".format(
             baseline["latestRelease"],
             latest_patch["patchId"],
-            len(missing),
         )
         if missing
         else "This environment is on the latest {0} patch level: {1} Patch {2}.".format(
