@@ -1,6 +1,11 @@
 import unittest
 
-from collector import build_fmw_patch_recommendation, patch_category, patch_presentation_classification
+from collector import (
+    build_fmw_patch_recommendation,
+    patch_category,
+    patch_presentation_classification,
+    standalone_directory_recommendation_scope,
+)
 
 
 class PatchClassificationTests(unittest.TestCase):
@@ -128,6 +133,65 @@ class PatchClassificationTests(unittest.TestCase):
         self.assertEqual(len(recommended), 1)
         self.assertIn("40058371", recommended[0]["recommendation"])
         self.assertEqual(recommendation["comparisonRows"][1]["recommendation"], "-")
+
+    def test_standalone_oud_uses_bundle_patch_even_if_profile_enables_weblogic(self):
+        opatch = {
+            "patches": [{"patchId": "39761493", "description": "OUD BUNDLE PATCH 12.2.1.4.260721 - AUG BP"}],
+            "distributions": ["Oracle Unified Directory 12.2.1.4.0", "OPatch 13.9.4.2.17"],
+            "products": [],
+        }
+        scope = standalone_directory_recommendation_scope(opatch, "oud")
+        recommendation = build_fmw_patch_recommendation(
+            opatch,
+            {"oud": {"weblogicEnabled": True}},
+            "/opt/oracle/DIR12c",
+            components=["OUD"],
+            recommendation_scope=scope,
+        )
+
+        self.assertEqual(scope, "product_bundle")
+        self.assertEqual(recommendation["status"], "latest")
+        self.assertEqual(recommendation["latestPatchId"], "39761493")
+        self.assertEqual(recommendation["latestRelease"], "OUD BUNDLE PATCH 12.2.1.4.260721 - AUG BP")
+        self.assertFalse(recommendation["stackPatchBundleApplicable"])
+        self.assertIn("Stack Patch Bundles are not applicable", recommendation["message"])
+        self.assertNotIn("latest 12c patch level", recommendation["message"])
+
+    def test_oud_with_weblogic_distribution_uses_spb_scope(self):
+        opatch = {
+            "patches": [{"patchId": "39761493", "description": "OUD BUNDLE PATCH 12.2.1.4.260721 - AUG BP"}],
+            "distributions": ["Oracle Unified Directory 12.2.1.4.0", "Oracle WebLogic Server 12.2.1.4.0"],
+            "products": [],
+        }
+        scope = standalone_directory_recommendation_scope(opatch, "oud")
+        recommendation = build_fmw_patch_recommendation(
+            opatch,
+            {},
+            "/opt/oracle/middleware",
+            components=["OUD"],
+            recommendation_scope=scope,
+        )
+
+        self.assertEqual(scope, "component")
+        self.assertEqual(recommendation["latestPatchId"], "40131601")
+        self.assertTrue(recommendation["stackPatchBundleApplicable"])
+
+    def test_standalone_oid_uses_oid_bundle_patch(self):
+        opatch = {
+            "patches": [{"patchId": "39882405", "description": "OID BUNDLE PATCH 12.2.1.4.260814"}],
+            "distributions": ["Oracle Internet Directory 12.2.1.4.0"],
+            "products": [],
+        }
+        recommendation = build_fmw_patch_recommendation(
+            opatch,
+            {},
+            "/opt/oracle/OID12c",
+            components=["OID"],
+            recommendation_scope=standalone_directory_recommendation_scope(opatch, "oid"),
+        )
+
+        self.assertEqual(recommendation["latestPatchId"], "39882405")
+        self.assertEqual(recommendation["recommendationScope"], "product_bundle")
 
 
 if __name__ == "__main__":

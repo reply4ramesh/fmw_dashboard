@@ -2239,11 +2239,14 @@ def environment_idm_components(environment):
     return components
 
 
-def standalone_directory_recommendation_scope(environment, product_key):
-    product_settings = (environment or {}).get(product_key) or {}
+def standalone_directory_recommendation_scope(opatch, product_key):
     if product_key not in ("oid", "oud"):
         return "component"
-    return "component" if bool(product_settings.get("weblogicEnabled")) else "product_bundle"
+    inventory_text = " ".join(
+        [str(item or "") for item in (opatch or {}).get("distributions") or []]
+        + [str(item.get("name") or "") for item in (opatch or {}).get("products") or []]
+    )
+    return "component" if re.search(r"\b(?:WEBLOGIC|WLS)\b", inventory_text, re.I) else "product_bundle"
 
 
 def patch_item_numbers(item):
@@ -2447,26 +2450,37 @@ def build_fmw_patch_recommendation(opatch, environment, oracle_home, components=
     for item in patches:
         installed_ids.update(patch_item_numbers(item))
     latest_patch = required[0] if product_bundle_only and required else baseline["latestPatch"]
+    latest_release = latest_patch.get("description") if product_bundle_only else baseline["latestRelease"]
+    component_label = "/".join(components) or "directory"
     if not installed_ids:
         latest_missing = dict(latest_patch)
         latest_missing["components"] = [component for component in latest_patch.get("applicability") or [] if component in components]
-        scope_label = "product bundle patch" if product_bundle_only else "Stack Patch Bundle"
+        base_message = (
+            "OPatch lsinventory did not report any installed patches. This standalone {0} Oracle home appears to be a base {1} installation. Apply the latest individual bundle patch, Patch {2} ({3}). An IDM Stack Patch Bundle is not applicable because a WebLogic distribution is not installed in this Oracle home.".format(
+                component_label,
+                baseline["version"],
+                latest_patch["patchId"],
+                latest_release,
+            )
+            if product_bundle_only
+            else "OPatch lsinventory did not report any installed patches. This ORACLE_HOME appears to be a base {0} installation. Please review Oracle KM document KA754 and apply the latest available {0} Stack Patch Bundle, currently {1} Patch {2}.".format(
+                baseline["version"],
+                latest_release,
+                latest_patch["patchId"],
+            )
+        )
         return {
             "family": baseline["family"],
             "version": baseline["version"],
-            "latestRelease": baseline["latestRelease"],
+            "latestRelease": latest_release,
             "latestPatchId": latest_patch["patchId"],
             "catalogSource": baseline.get("catalogSource", "bundled"),
             "components": components,
             "recommendationScope": "product_bundle" if product_bundle_only else "component",
+            "stackPatchBundleApplicable": not product_bundle_only,
             "status": "updates_recommended",
             "baseInstall": True,
-            "message": "OPatch lsinventory did not report any installed patches. This ORACLE_HOME appears to be a base {0} installation. Please review Oracle KM document KA754 and apply the latest available {0} {1}, currently {2} Patch {3}.".format(
-                baseline["version"],
-                scope_label,
-                baseline["latestRelease"],
-                latest_patch["patchId"],
-            ),
+            "message": base_message,
             "missingPatches": [latest_missing],
             "comparisonRows": [{
                 "patchId": latest_patch["patchId"],
@@ -2520,25 +2534,42 @@ def build_fmw_patch_recommendation(opatch, environment, oracle_home, components=
 
     status = "updates_recommended" if missing else "latest"
     message = (
-        "Recommended latest patch level is {0} Patch {1}. Apply the SPB as a unit; the installed rows below show each applicable component update once.".format(
-            baseline["latestRelease"],
-            latest_patch["patchId"],
+        (
+            "Recommended latest individual {0} bundle patch is Patch {2} ({1}). This standalone Oracle home does not contain a WebLogic distribution, so an IDM Stack Patch Bundle is not applicable.".format(
+                component_label,
+                latest_release,
+                latest_patch["patchId"],
+            )
+            if product_bundle_only
+            else "Recommended latest patch level is {0} Patch {1}. Apply the SPB as a unit; the installed rows below show each applicable component update once.".format(
+                latest_release,
+                latest_patch["patchId"],
+            )
         )
         if missing
-        else "This environment is on the latest {0} patch level: {1} Patch {2}.".format(
-            baseline["family"],
-            baseline["latestRelease"],
-            latest_patch["patchId"],
+        else (
+            "This standalone {0} Oracle home is on the latest individual bundle patch level: Patch {2} ({1}). IDM Stack Patch Bundles are not applicable because a WebLogic distribution is not installed in this Oracle home.".format(
+                component_label,
+                latest_release,
+                latest_patch["patchId"],
+            )
+            if product_bundle_only
+            else "This environment is on the latest {0} patch level: {1} Patch {2}.".format(
+                baseline["family"],
+                latest_release,
+                latest_patch["patchId"],
+            )
         )
     )
     return {
         "family": baseline["family"],
         "version": baseline["version"],
-        "latestRelease": baseline["latestRelease"],
+        "latestRelease": latest_release,
         "latestPatchId": latest_patch["patchId"],
         "catalogSource": baseline.get("catalogSource", "bundled"),
         "components": components,
         "recommendationScope": "product_bundle" if product_bundle_only else "component",
+        "stackPatchBundleApplicable": not product_bundle_only,
         "status": status,
         "message": message,
         "missingPatches": missing,
@@ -3059,7 +3090,7 @@ def enrich_oud_shared_metrics(target, environment, metrics, progress=None):
             environment,
             oracle_home,
             components=["OUD"],
-            recommendation_scope=standalone_directory_recommendation_scope(environment, "oud"),
+            recommendation_scope=standalone_directory_recommendation_scope(result["opatch"], "oud"),
         )
         result["opatch"]["patchComparisonRows"] = result["opatch"]["recommendation"].get("comparisonRows", [])
     certificates, certificate_error = task_result(task_results, "certificates", ([], "OUD certificate collection failed."))
@@ -3583,7 +3614,7 @@ def get_oid_metrics(target, environment, progress=None):
             environment,
             oracle_home,
             components=["OID"],
-            recommendation_scope=standalone_directory_recommendation_scope(environment, "oid"),
+            recommendation_scope=standalone_directory_recommendation_scope(opatch, "oid"),
         )
         opatch["patchComparisonRows"] = opatch["recommendation"].get("comparisonRows", [])
     else:
@@ -9492,7 +9523,7 @@ def refresh_saved_opatch_recommendations(dashboard_payload):
             environment,
             oracle_home,
             components=component_by_product.get(product_key),
-            recommendation_scope=standalone_directory_recommendation_scope(environment, product_key),
+            recommendation_scope=standalone_directory_recommendation_scope(opatch, product_key),
         )
         opatch["recommendation"] = recommendation
         opatch["patchComparisonRows"] = recommendation.get("comparisonRows", [])

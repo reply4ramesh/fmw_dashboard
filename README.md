@@ -1,5 +1,9 @@
 # FMW Operations Console
 
+## Version 165
+
+Version 165 determines OUD and OID patch scope from the collected Oracle home inventory instead of the saved profile toggle. When OPatch/viewInventory does not report a WebLogic distribution, the home is treated as standalone and receives only the latest individual OUD or OID bundle-patch recommendation; IDM Stack Patch Bundles are explicitly marked as not applicable. When a WebLogic distribution is present, the normal SPB recommendation remains enabled. The dashboard wording, status badges, and recommended-level details now distinguish standalone bundle patches from SPBs.
+
 ## Version 164
 
 Version 164 updates patch recommendations to the October 2026 IDM Stack Patch Bundles: Patch `40131416` for 14c (`14.1.2.1.261008`) and Patch `40131601` for 12.2.1.4 (`12.2.1.4.261008`). The catalog includes the current constituent patches and product applicability for OAM, OIG, OUD, and OID. Recommendation matching now recognizes superseded patch IDs even when OPatch reports an installed patch only as `One-off`, shows each applicable update once beside the installed component it replaces, and no longer adds repetitive per-member `Not installed` rows to populated inventories. A detected current SPB is treated as the authoritative bundle level.
