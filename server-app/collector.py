@@ -879,17 +879,240 @@ def parse_password_policy_properties(text):
     return rows
 
 
+def oud_cli_environment():
+    # OUD scripts select Java from the instance configuration. Dashboard service
+    # JVM flags (especially --add-opens) must not leak into older OUD runtimes.
+    return "unset JAVA_TOOL_OPTIONS _JAVA_OPTIONS JDK_JAVA_OPTIONS; export COLUMNS=240;"
+
+
 def oud_secure_command(bin_directory, bind_dn, bind_password, body):
     return (
-        "cd {bin_dir} && pwfile=$(mktemp ./pwd.XXXXXX.txt) && "
-        "trap 'rm -f \"$pwfile\"' EXIT && printf %s {password} > \"$pwfile\" && chmod 600 \"$pwfile\" && "
+        "cd {bin_dir} || exit $?; {environment} umask 077; "
+        "pwfile=$(mktemp \"${{TMPDIR:-/tmp}}/fmw-oud-pwd.XXXXXX\") && "
+        "trap 'rm -f \"$pwfile\"' EXIT HUP INT TERM && "
+        "printf %s {password} | tee \"$pwfile\" >/dev/null && chmod 600 \"$pwfile\" && "
         "BIND_DN={bind_dn}; {body}"
     ).format(
         bin_dir=shlex.quote(bin_directory),
+        environment=oud_cli_environment(),
         password=shlex.quote(str(bind_password or "")),
         bind_dn=shlex.quote(str(bind_dn or "")),
         body=body,
     )
+
+
+def parse_dsconfig_list(text, keys):
+    rows = []
+    expected = [str(key or "").strip() for key in keys]
+    for raw_line in str(text or "").splitlines():
+        line = raw_line.strip()
+        if not line or re.fullmatch(r"[-=:\s]+", line):
+            continue
+        parts = [part.strip() for part in re.split(r"\s+:\s+", line)]
+        if len(parts) < len(expected):
+            continue
+        if parts[0].lower().replace(" ", "-") in (
+            "extension", "workflow-element", "workflow", "network-group",
+        ):
+            continue
+        rows.append({key: parts[index] for index, key in enumerate(expected)})
+    return rows
+
+
+def dsconfig_safe_properties(text, allowed):
+    allowed_names = {str(name or "").strip().lower() for name in allowed}
+    properties = {}
+    for row in parse_password_policy_properties(text):
+        name = str(row.get("property") or "").strip().lower()
+        if name in allowed_names:
+            properties[name] = row.get("value") or ""
+    return properties
+
+
+def collect_oud_replication_server_configuration(target, settings, bin_directory, bind_dn, bind_password):
+    empty = {
+        "replicationServerConfigured": False,
+        "replicationServerProperties": {},
+        "replicationServerError": None,
+        "commands": [],
+    }
+    if not bind_dn or not bind_password:
+        empty["replicationServerError"] = "OUD root user or password is not configured."
+        return empty
+
+    admin_port = settings.get("adminPort") or 4444
+    command = (
+        'DSCONFIG=./dsconfig; [ -x "$DSCONFIG" ] || DSCONFIG=dsconfig; '
+        '"$DSCONFIG" -h localhost -p {port} -D "$BIND_DN" -j "$pwfile" -X -n '
+        'get-synchronization-provider-prop --provider-name "Multimaster Synchronization"'
+    ).format(port=shlex.quote(str(admin_port)))
+    result = run_target(
+        target,
+        oud_secure_command(bin_directory, bind_dn, bind_password, command),
+    )
+    properties = {}
+    error = None
+    if result.get("exit_code") == 0:
+        properties = dsconfig_safe_properties(
+            result.get("output"),
+            (
+                "enabled", "replication-server-id", "replication-port",
+                "replication-server", "group-id", "weight",
+            ),
+        )
+    else:
+        error = result.get("output") or "Unable to read the local synchronization provider."
+
+    enabled = str(properties.get("enabled") or "true").strip().lower() not in (
+        "false", "disabled", "off", "no", "0",
+    )
+    configured = enabled and bool(
+        str(properties.get("replication-server-id") or "").strip()
+        or str(properties.get("replication-port") or "").strip()
+    )
+    return {
+        "replicationServerConfigured": configured,
+        "replicationServerProperties": properties,
+        "replicationServerError": error,
+        "commands": [{
+            "label": "Local Replication Server Configuration",
+            "command": 'cd {0} && dsconfig ... get-synchronization-provider-prop --provider-name "Multimaster Synchronization"'.format(
+                bin_directory
+            ),
+        }],
+    }
+
+
+def collect_oud_proxy_configuration(target, settings, bin_directory, instance_name, bind_dn, bind_password):
+    empty = {
+        "proxyConfigured": False,
+        "proxyWorkflowElements": [],
+        "proxyDataSources": [],
+        "proxyError": None,
+        "commands": [],
+    }
+    if not bind_dn or not bind_password:
+        empty["proxyError"] = "OUD root user or password is not configured."
+        return empty
+
+    admin_port = settings.get("adminPort") or 4444
+    base = (
+        'DSCONFIG=./dsconfig; [ -x "$DSCONFIG" ] || DSCONFIG=dsconfig; '
+        '"$DSCONFIG" -h localhost -p {port} -D "$BIND_DN" -j "$pwfile" -X -n '
+    ).format(port=shlex.quote(str(admin_port)))
+    commands = []
+
+    workflow_result = run_target(
+        target,
+        oud_secure_command(bin_directory, bind_dn, bind_password, base + "list-workflow-elements"),
+    )
+    commands.append({
+        "label": "Proxy Workflow Elements",
+        "command": 'cd {0} && dsconfig -h localhost -p {1} -D "{2}" -j <temporary password file> -X -n list-workflow-elements'.format(
+            bin_directory, admin_port, bind_dn or "cn=Directory Manager"
+        ),
+    })
+    extension_result = run_target(
+        target,
+        oud_secure_command(bin_directory, bind_dn, bind_password, base + "list-extensions"),
+    )
+    commands.append({
+        "label": "Proxy Data Sources",
+        "command": 'cd {0} && dsconfig -h localhost -p {1} -D "{2}" -j <temporary password file> -X -n list-extensions'.format(
+            bin_directory, admin_port, bind_dn or "cn=Directory Manager"
+        ),
+    })
+
+    errors = []
+    workflows = []
+    extensions = []
+    if workflow_result.get("exit_code") == 0:
+        workflows = parse_dsconfig_list(
+            workflow_result.get("output"),
+            ("name", "type", "enabled"),
+        )
+    else:
+        errors.append("workflow elements: {0}".format(workflow_result.get("output") or "dsconfig failed"))
+    if extension_result.get("exit_code") == 0:
+        extensions = parse_dsconfig_list(
+            extension_result.get("output"),
+            ("name", "type"),
+        )
+    else:
+        errors.append("extensions: {0}".format(extension_result.get("output") or "dsconfig failed"))
+
+    proxy_types = {
+        "proxy-ldap", "load-balancing", "distribution", "join", "transformation",
+        "rdbms", "ad-password", "ecl", "proxy-security",
+    }
+    proxy_workflows = []
+    workflow_allowed = (
+        "enabled", "client-cred-mode", "ldap-server-extension",
+        "load-balancing-algorithm", "distribution-algorithm", "workflow-element",
+    )
+    for row in workflows:
+        workflow_type = str(row.get("type") or "").strip().lower()
+        if workflow_type not in proxy_types:
+            continue
+        item = dict(row)
+        item["instanceName"] = instance_name
+        prop_result = run_target(
+            target,
+            oud_secure_command(
+                bin_directory,
+                bind_dn,
+                bind_password,
+                base + "get-workflow-element-prop --element-name {0}".format(shlex.quote(row.get("name") or "")),
+            ),
+        )
+        commands.append({
+            "label": "Proxy Workflow - {0}".format(row.get("name") or "Workflow"),
+            "command": 'cd {0} && dsconfig ... get-workflow-element-prop --element-name "{1}"'.format(
+                bin_directory, row.get("name") or ""
+            ),
+        })
+        if prop_result.get("exit_code") == 0:
+            item.update(dsconfig_safe_properties(prop_result.get("output"), workflow_allowed))
+        proxy_workflows.append(item)
+
+    proxy_data_sources = []
+    extension_allowed = (
+        "enabled", "remote-ldap-server-address", "remote-ldap-server-port",
+        "remote-ldap-server-ssl-policy", "health-check-interval",
+        "monitoring-bind-dn", "connection-timeout", "response-timeout",
+    )
+    for row in extensions:
+        extension_type = str(row.get("type") or "").strip().lower()
+        if extension_type not in ("ldap-server", "rdbms"):
+            continue
+        item = dict(row)
+        item["instanceName"] = instance_name
+        prop_result = run_target(
+            target,
+            oud_secure_command(
+                bin_directory,
+                bind_dn,
+                bind_password,
+                base + "get-extension-prop --extension-name {0}".format(shlex.quote(row.get("name") or "")),
+            ),
+        )
+        commands.append({
+            "label": "Proxy Data Source - {0}".format(row.get("name") or "Extension"),
+            "command": 'cd {0} && dsconfig ... get-extension-prop --extension-name "{1}"'.format(
+                bin_directory, row.get("name") or ""
+            ),
+        })
+        if prop_result.get("exit_code") == 0:
+            item.update(dsconfig_safe_properties(prop_result.get("output"), extension_allowed))
+        proxy_data_sources.append(item)
+
+    return {
+        "proxyConfigured": bool(proxy_workflows or proxy_data_sources),
+        "proxyWorkflowElements": proxy_workflows,
+        "proxyDataSources": proxy_data_sources,
+        "proxyError": "; ".join(errors) if errors and not (proxy_workflows or proxy_data_sources) else None,
+        "commands": commands,
+    }
 
 
 def collect_oud_monitoring_and_policies(target, settings, bin_directory, instance_name, bind_dn, bind_password):
@@ -4716,18 +4939,44 @@ def collect_single_oud_metrics(target, environment, instance_profile=None):
             "commands": [],
         }
 
-    status_command = 'cd {0} && pwfile=$(mktemp ./pwd.XXXXXX.txt) && trap \'rm -f "$pwfile"\' EXIT && printf %s {1} > "$pwfile" && chmod 600 "$pwfile" && ./status -D {2} -j "$pwfile"'.format(
-        shlex.quote(bin_directory),
-        shlex.quote(str(bind_password or "")),
-        shlex.quote(str(bind_dn or "")),
+    path_result = run_target(
+        target,
+        "test -d {0} && test -x {0}/status && test -x {0}/dsconfig".format(shlex.quote(bin_directory)),
     )
-    replication_command = 'cd {0} && pwfile=$(mktemp ./pwd.XXXXXX.txt) && trap \'rm -f "$pwfile"\' EXIT && printf %s {1} > "$pwfile" && chmod 600 "$pwfile" && export COLUMNS=240 && ./dsreplication status -D {2} -j "$pwfile" -X --Advanced -n'.format(
-        shlex.quote(bin_directory),
-        shlex.quote(str(bind_password or "")),
-        shlex.quote(str(bind_dn or "")),
+    if path_result.get("exit_code") != 0:
+        return {
+            "error": "Configured OUD instance path is not present or usable on this host: {0}".format(instance_home),
+            "instanceName": instance_name,
+            "instanceHome": instance_home,
+            "configuredOnHost": False,
+            "serverRoles": [],
+            "serverRole": "Not present on this host",
+            "ldapPort": settings.get("ldapPort") or 1389,
+            "adminPort": settings.get("adminPort") or 4444,
+            "listeners": [],
+            "backends": [],
+            "replicationSections": [],
+            "replicationNodes": [],
+            "proxyConfigured": False,
+            "proxyWorkflowElements": [],
+            "proxyDataSources": [],
+            "commands": [],
+        }
+
+    status_command = oud_secure_command(
+        bin_directory,
+        bind_dn,
+        bind_password,
+        './status -D "$BIND_DN" -j "$pwfile"',
     )
-    build_command = "cd {0} && ./start-ds -F".format(shlex.quote(bin_directory))
-    system_command = "cd {0} && ./start-ds -s".format(shlex.quote(bin_directory))
+    replication_command = oud_secure_command(
+        bin_directory,
+        bind_dn,
+        bind_password,
+        './dsreplication status -D "$BIND_DN" -j "$pwfile" -X --Advanced -n',
+    )
+    build_command = "cd {0} && {1} ./start-ds -F".format(shlex.quote(bin_directory), oud_cli_environment())
+    system_command = "cd {0} && {1} ./start-ds -s".format(shlex.quote(bin_directory), oud_cli_environment())
 
     errors = []
     status_output = ""
@@ -4772,6 +5021,21 @@ def collect_single_oud_metrics(target, environment, instance_profile=None):
                 break
     if inferred_admin_port:
         settings["adminPort"] = inferred_admin_port
+    replication_server_payload = collect_oud_replication_server_configuration(
+        target,
+        settings,
+        bin_directory,
+        bind_dn,
+        bind_password,
+    )
+    proxy_payload = collect_oud_proxy_configuration(
+        target,
+        settings,
+        bin_directory,
+        instance_name,
+        bind_dn,
+        bind_password,
+    )
     monitor_payload = collect_oud_monitoring_and_policies(
         target,
         settings,
@@ -4811,6 +5075,15 @@ def collect_single_oud_metrics(target, environment, instance_profile=None):
     })
     replication_enabled_sections = [section for section in replication_sections if section.get("enabled")]
     replication_disabled_sections = [section for section in replication_sections if not section.get("enabled")]
+    server_roles = []
+    if proxy_payload.get("proxyConfigured"):
+        server_roles.append("Proxy Server")
+    if backends:
+        server_roles.append("Directory Server")
+    if replication_server_payload.get("replicationServerConfigured"):
+        server_roles.append("Replication Server")
+    if not server_roles:
+        server_roles.append("OUD Server")
 
     def pretty_memory(key):
         raw_value = system_values.get(key)
@@ -4821,6 +5094,9 @@ def collect_single_oud_metrics(target, environment, instance_profile=None):
         "error": "; ".join(errors) if errors else None,
         "instanceName": instance_name,
         "instanceHome": instance_home,
+        "configuredOnHost": True,
+        "serverRoles": server_roles,
+        "serverRole": " / ".join(server_roles),
         "ldapPort": settings.get("ldapPort") or 1389,
         "adminPort": settings.get("adminPort") or 4444,
         "binDirectory": bin_directory,
@@ -4829,7 +5105,7 @@ def collect_single_oud_metrics(target, environment, instance_profile=None):
             {"label": "Replication Status", "command": 'cd {0} && ./dsreplication status -D "{1}" -j <temporary password file> -X --Advanced -n'.format(bin_directory, bind_dn or "cn=Directory Manager")},
             {"label": "Build Version", "command": "cd {0} && ./start-ds -F".format(bin_directory)},
             {"label": "Runtime System", "command": "cd {0} && ./start-ds -s".format(bin_directory)},
-        ] + (monitor_payload.get("commands") or []),
+        ] + (replication_server_payload.get("commands") or []) + (proxy_payload.get("commands") or []) + (monitor_payload.get("commands") or []),
         "serverRunStatus": summary.get("Server Run Status"),
         "openConnections": int(open_connections) if open_connections and str(open_connections).isdigit() else open_connections,
         "hostName": summary.get("Host Name") or system_values.get("System Name"),
@@ -4863,6 +5139,13 @@ def collect_single_oud_metrics(target, environment, instance_profile=None):
             row for row in replication_nodes
             if str(row.get("status") or "").strip().lower() == "normal"
         ]),
+        "replicationServerConfigured": bool(replication_server_payload.get("replicationServerConfigured")),
+        "replicationServerProperties": replication_server_payload.get("replicationServerProperties") or {},
+        "replicationServerError": replication_server_payload.get("replicationServerError"),
+        "proxyConfigured": bool(proxy_payload.get("proxyConfigured")),
+        "proxyWorkflowElements": proxy_payload.get("proxyWorkflowElements") or [],
+        "proxyDataSources": proxy_payload.get("proxyDataSources") or [],
+        "proxyError": proxy_payload.get("proxyError"),
         "buildId": build_values.get("Build ID"),
         "majorVersion": build_values.get("Major Version"),
         "maintenanceVersion": build_values.get("Maintenance Version"),
@@ -4940,6 +5223,9 @@ def get_oud_metrics(target, environment, progress=None):
     aggregate["namingContexts"] = []
     aggregate["monitorEntries"] = []
     aggregate["passwordPolicies"] = []
+    aggregate["proxyWorkflowElements"] = []
+    aggregate["proxyDataSources"] = []
+    aggregate["serverRoles"] = []
 
     errors = []
     statuses = []
@@ -4959,7 +5245,10 @@ def get_oud_metrics(target, environment, progress=None):
             item = dict(command)
             item["label"] = "{0} - {1}".format(instance_name, item.get("label") or "Command")
             aggregate["commands"].append(item)
-        for key in ("listeners", "backends", "replicationNodes", "monitorEntries", "passwordPolicies"):
+        for key in (
+            "listeners", "backends", "replicationNodes", "monitorEntries", "passwordPolicies",
+            "proxyWorkflowElements", "proxyDataSources",
+        ):
             for row in result.get(key) or []:
                 item = dict(row)
                 item["instanceName"] = instance_name
@@ -4971,6 +5260,9 @@ def get_oud_metrics(target, environment, progress=None):
         for context in result.get("namingContexts") or []:
             if context:
                 aggregate["namingContexts"].append(context)
+        for role in result.get("serverRoles") or []:
+            if role and role not in aggregate["serverRoles"]:
+                aggregate["serverRoles"].append(role)
 
     if open_connection_values:
         aggregate["openConnections"] = open_connections
@@ -5005,6 +5297,8 @@ def get_oud_metrics(target, environment, progress=None):
         row for row in aggregate["replicationNodes"]
         if str(row.get("status") or "").strip().lower() == "normal"
     ])
+    aggregate["proxyConfigured"] = bool(aggregate["proxyWorkflowElements"] or aggregate["proxyDataSources"])
+    aggregate["serverRole"] = " / ".join(aggregate["serverRoles"]) or "OUD Server"
     return enrich_oud_shared_metrics(target, environment, aggregate, progress=progress)
 
 

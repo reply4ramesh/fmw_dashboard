@@ -11,9 +11,10 @@ DEFAULT_OAM_CHECKS = [
     {"product": "oam", "name": "Fusion Middleware EM", "url": "http://localhost:7001/em"},
 ]
 
-DEFAULT_OUD_CHECKS = [
+LEGACY_DEFAULT_OUD_CHECKS = [
     {"product": "oud", "name": "OUDSM", "url": "http://localhost:7101/oudsm"},
 ]
+DEFAULT_OUD_CHECKS = []
 
 DEFAULT_OIG_CHECKS = []
 
@@ -317,14 +318,12 @@ def products_for_environment_type(value):
 
 
 def has_weblogic_profile(products=None, weblogic=None):
-    product_flags = products or {}
     weblogic_config = weblogic or {}
     admin_host = weblogic_config.get("adminHost") or {}
     return bool(
-        coerce_bool(product_flags.get("weblogic"), False)
-        or coerce_bool(weblogic_config.get("enabled"), False)
-        or str(weblogic_config.get("adminUrl") or "").strip()
+        str(weblogic_config.get("adminUrl") or "").strip()
         or str(weblogic_config.get("oracleHome") or "").strip()
+        or str(weblogic_config.get("domainHome") or "").strip()
         or str(admin_host.get("host") or "").strip()
     )
 
@@ -1286,8 +1285,12 @@ def normalize_environment(payload, existing=None):
             environment["weblogic"].get("adminUrl"),
         )
 
-    if not environment["oud"]["checks"] and products.get("oud"):
-        environment["oud"]["checks"] = deep_copy(DEFAULT_OUD_CHECKS)
+    if (
+        environment_type == "oud"
+        and not environment["oud"].get("weblogicEnabled")
+        and environment["oud"].get("checks") == LEGACY_DEFAULT_OUD_CHECKS
+    ):
+        environment["oud"]["checks"] = []
 
     environment["weblogic"]["enabled"] = bool(
         products.get("weblogic")
