@@ -1,5 +1,9 @@
 # FMW Operations Console
 
+## Version 168
+
+Version 168 adds capacity monitoring for the filesystems that contain configured Oracle homes, domain homes, and instance homes. Server Metrics now shows a Product Disk gauge alongside root disk and a detailed table with each saved purpose and path, the actual filesystem mount, used and available space, and utilization. Multiple configured paths on the same mount, such as OUD `ORACLE_HOME` and `INSTANCE_HOME` under `/opt`, are grouped into one accurate filesystem reading while retaining both purposes. Product-filesystem pressure now participates in the same warning and critical host-health thresholds as root disk.
+
 ## Version 167
 
 Version 167 repairs OUD runtime collection for customer shells that enable `noclobber`, prevents dashboard JVM flags from leaking into OUD command scripts, and stops treating instance paths from other hosts as local failures. OUD Product Views now identify Directory Server, Replication Server, and Proxy Server roles and display proxy workflow elements plus their remote LDAP or RDBMS data sources without collecting credentials. Replication Server is reported only when the local synchronization provider exposes an enabled replication server ID or port, rather than whenever a directory server can see the topology. Standalone OUD profiles no longer inherit WebLogic or a localhost OUDSM check unless those services are explicitly configured. Replication remains collected through Oracle's `dsreplication status` command, with clearer host-local diagnostics when a configured instance is not installed on the connected server.

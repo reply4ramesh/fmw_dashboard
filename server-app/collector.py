@@ -27,6 +27,10 @@ DEFAULT_SERVER_HEALTH_THRESHOLDS = {
         "warning": {"ge": 70},
         "critical": {"ge": 80},
     },
+    "productFilesystemUsedPercent": {
+        "warning": {"ge": 70},
+        "critical": {"ge": 80},
+    },
     "cpuIoWaitPercent": {
         "warning": {"ge": 15},
         "critical": {"ge": 30},
@@ -151,6 +155,7 @@ def build_server_health(server_snapshot):
     memory = server_snapshot.get("memory") or {}
     root_disk = server_snapshot.get("rootDisk") or {}
     refresh_disk = server_snapshot.get("refreshDisk") or {}
+    product_filesystems = server_snapshot.get("productFilesystems") or []
     cpu_breakdown = uptime.get("cpuBreakdown") or {}
 
     checks = {
@@ -200,6 +205,23 @@ def build_server_health(server_snapshot):
             ),
         },
     }
+
+    for index, filesystem in enumerate(product_filesystems):
+        if not isinstance(filesystem, dict):
+            continue
+        labels = filesystem.get("labels") or []
+        mount = filesystem.get("mount") or filesystem.get("filesystem") or "Configured filesystem"
+        checks["productFilesystem:{0}".format(index)] = {
+            "label": "{0} ({1})".format(
+                ", ".join(str(item) for item in labels if item) or "Product Filesystem",
+                mount,
+            ),
+            "value": filesystem.get("usedPercent"),
+            "severity": threshold_severity(
+                filesystem.get("usedPercent"),
+                DEFAULT_SERVER_HEALTH_THRESHOLDS["productFilesystemUsedPercent"],
+            ),
+        }
 
     overall = "healthy"
     for item in checks.values():
@@ -1750,7 +1772,81 @@ def build_oaa_target(environment, fallback_target=None):
     }
 
 
-def get_server_snapshot(target, script_directory=None, process_matchers=None):
+def configured_product_paths(environment):
+    environment = environment or {}
+    rows = []
+
+    def add_path(label, value):
+        path = str(value or "").strip().rstrip("/") or "/"
+        if not value or not str(value).strip():
+            return
+        for row in rows:
+            if row["path"] == path:
+                if label not in row["labels"]:
+                    row["labels"].append(label)
+                return
+        rows.append({"path": path, "labels": [label]})
+
+    product_labels = {
+        "weblogic": "WebLogic",
+        "oam": "OAM",
+        "oig": "OIG",
+        "oud": "OUD",
+        "oid": "OID",
+        "oaa": "OAA",
+        "soa": "SOA",
+    }
+    for product, product_label in product_labels.items():
+        settings = environment.get(product) or {}
+        if not isinstance(settings, dict):
+            continue
+        add_path("{0} ORACLE_HOME".format(product_label), settings.get("oracleHome"))
+        add_path("{0} DOMAIN_HOME".format(product_label), settings.get("domainHome"))
+        instances = settings.get("instances") or []
+        if not instances:
+            add_path("{0} INSTANCE_HOME".format(product_label), settings.get("instanceHome"))
+        for index, instance in enumerate(instances):
+            if not isinstance(instance, dict):
+                continue
+            name = str(instance.get("name") or instance.get("label") or "Instance {0}".format(index + 1)).strip()
+            add_path(
+                "{0} {1} INSTANCE_HOME".format(product_label, name),
+                instance.get("instanceHome") or instance.get("path"),
+            )
+    return rows
+
+
+def collect_product_filesystems(target, configured_paths):
+    grouped = []
+    by_mount = {}
+    for entry in configured_paths or []:
+        path = str((entry or {}).get("path") or "").strip()
+        if not path:
+            continue
+        result = run_target(
+            target,
+            "if [ -e {0} ]; then df -P -B1 {0}; fi".format(shlex.quote(path)),
+        )
+        payload = parse_disk_bytes(result.get("output"))
+        if not payload:
+            continue
+        mount_key = "{0}|{1}".format(payload.get("filesystem") or "", payload.get("mount") or "")
+        current = by_mount.get(mount_key)
+        if current is None:
+            current = dict(payload)
+            current["configuredPaths"] = []
+            current["labels"] = []
+            by_mount[mount_key] = current
+            grouped.append(current)
+        if path not in current["configuredPaths"]:
+            current["configuredPaths"].append(path)
+        for label in (entry or {}).get("labels") or []:
+            if label and label not in current["labels"]:
+                current["labels"].append(label)
+    return grouped
+
+
+def get_server_snapshot(target, script_directory=None, process_matchers=None, filesystem_paths=None):
     hostname = run_target(target, "hostname")
     if hostname["exit_code"] != 0:
         return {
@@ -1780,6 +1876,7 @@ def get_server_snapshot(target, script_directory=None, process_matchers=None):
     memory_payload = parse_meminfo_proc(meminfo.get("output")) or parse_memory(memory["output"])
     root_disk_payload = parse_disk_bytes(root_disk_bytes.get("output")) or parse_disk(root_disk["output"])
     refresh_disk_payload = parse_disk_bytes(refresh_disk_bytes.get("output")) or parse_disk(refresh_disk["output"])
+    product_filesystems = collect_product_filesystems(target, filesystem_paths)
     uptime_payload = parse_uptime((uptime["output"] or "").strip(), cpu_count)
     try:
         uptime_payload["uptimeSeconds"] = int(float((uptime_seconds.get("output") or "0").strip()))
@@ -1829,6 +1926,7 @@ def get_server_snapshot(target, script_directory=None, process_matchers=None):
         "memory": memory_payload,
         "rootDisk": root_disk_payload,
         "refreshDisk": refresh_disk_payload,
+        "productFilesystems": product_filesystems,
         "scriptDirectory": script_directory,
         "scripts": scripts,
         "processes": processes,
@@ -9894,7 +9992,14 @@ def collect_monitoring_server(monitoring_config):
     }
 
 
-def collect_weblogic_cluster_host_snapshots(environment, primary_target, primary_server, server_metrics, weblogic_metrics=None):
+def collect_weblogic_cluster_host_snapshots(
+    environment,
+    primary_target,
+    primary_server,
+    server_metrics,
+    weblogic_metrics=None,
+    filesystem_paths=None,
+):
     nodes = build_discovered_weblogic_cluster_targets(environment, primary_target, weblogic_metrics)
     if len(nodes) <= 1:
         return [], {}
@@ -9908,6 +10013,7 @@ def collect_weblogic_cluster_host_snapshots(environment, primary_target, primary
                 node.get("target") or primary_target,
                 script_directory=server_metrics.get("scriptDirectory"),
                 process_matchers=server_metrics.get("processMatchers") or [],
+                filesystem_paths=filesystem_paths,
             )
             snapshot["health"] = build_server_health(snapshot)
         snapshot["nodeId"] = node.get("id") or "node{0}".format(index + 1)
@@ -9955,7 +10061,15 @@ def collect_weblogic_cluster_host_snapshots(environment, primary_target, primary
     return snapshots, discovery
 
 
-def collect_product_host_snapshots(environment, primary_target, primary_server, server_metrics, base_snapshots=None, base_discovery=None):
+def collect_product_host_snapshots(
+    environment,
+    primary_target,
+    primary_server,
+    server_metrics,
+    base_snapshots=None,
+    base_discovery=None,
+    filesystem_paths=None,
+):
     products = environment.get("products") or {}
     snapshots = [dict(item or {}) for item in (base_snapshots or [])]
     base_discovery = dict(base_discovery or {})
@@ -10032,6 +10146,7 @@ def collect_product_host_snapshots(environment, primary_target, primary_server, 
             product_target,
             script_directory=server_metrics.get("scriptDirectory"),
             process_matchers=server_metrics.get("processMatchers") or [],
+            filesystem_paths=filesystem_paths,
         )
         snapshot["health"] = build_server_health(snapshot)
         annotate_snapshot(snapshot, node_id, node_name, role, source_servers, product_target, product_host=True)
@@ -10095,10 +10210,12 @@ def collect_product_host_snapshots(environment, primary_target, primary_server, 
 def collect_environment_dashboard(environment, progress=None):
     target = build_environment_target(environment)
     server_metrics = environment.get("serverMetrics") or {}
+    filesystem_paths = configured_product_paths(environment)
     server = get_server_snapshot(
         target,
         script_directory=server_metrics.get("scriptDirectory"),
         process_matchers=server_metrics.get("processMatchers") or [],
+        filesystem_paths=filesystem_paths,
     )
     server["health"] = build_server_health(server)
     app_checks = collect_app_checks(target, environment)
@@ -10109,6 +10226,7 @@ def collect_environment_dashboard(environment, progress=None):
         server,
         server_metrics,
         product_metrics.get("weblogic") if product_metrics else None,
+        filesystem_paths=filesystem_paths,
     )
     host_snapshots, host_discovery = collect_product_host_snapshots(
         environment,
@@ -10117,6 +10235,7 @@ def collect_environment_dashboard(environment, progress=None):
         server_metrics,
         base_snapshots=cluster_host_snapshots,
         base_discovery=cluster_discovery,
+        filesystem_paths=filesystem_paths,
     )
     if host_snapshots:
         server["clusterNodes"] = host_snapshots
