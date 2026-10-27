@@ -1,5 +1,9 @@
 # FMW Operations Console
 
+## Version 169
+
+Version 169 corrects the OPatch current-level display so recommendation rows are never presented as installed patches. The Current Bundle Patch or Current Stack Bundle card now comes only from patches actually returned by OPatch inventory. When no installed patches are reported, the dashboard identifies the current level as a base installation and keeps the recommendation in the warning state. When the recommended patch is genuinely present in inventory, the recommendation remains green and reports the latest bundle level as applied.
+
 ## Version 168
 
 Version 168 adds capacity monitoring for the filesystems that contain configured Oracle homes, domain homes, and instance homes. Server Metrics now shows a Product Disk gauge alongside root disk and a detailed table with each saved purpose and path, the actual filesystem mount, used and available space, and utilization. Multiple configured paths on the same mount, such as OUD `ORACLE_HOME` and `INSTANCE_HOME` under `/opt`, are grouped into one accurate filesystem reading while retaining both purposes. Product-filesystem pressure now participates in the same warning and critical host-health thresholds as root disk.
