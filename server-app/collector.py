@@ -8144,10 +8144,23 @@ def parse_oam_setting_paths(text, config_file=""):
             result["rows"].append({"path": path, "name": name, "value": value})
 
     def walk(element, tokens):
-        name = setting_name(element) if is_setting(element) else ""
+        setting_element = is_setting(element)
+        name = setting_name(element) if setting_element else ""
+        tag_name = strip_xml_namespace(element.tag)
         next_tokens = list(tokens)
         if name and name.lower() != "ngamconfiguration":
             next_tokens.append(name)
+        elif not setting_element and tag_name.lower() not in (
+            "ngamconfiguration",
+            "configuration",
+            "settings",
+            "setting",
+            "value",
+            "values",
+        ):
+            # OAM releases use both Setting/Name maps and ordinary XML wrappers.
+            # Preserve semantic wrapper names so the curated parser works for both.
+            next_tokens.append(tag_name)
         path = "/" + "/".join(next_tokens) if next_tokens else "/"
         text_value = " ".join(str(element.text or "").split())
         if text_value:
@@ -8156,6 +8169,8 @@ def parse_oam_setting_paths(text, config_file=""):
             if str(attr_name).lower() in ("name", "displayname", "xmlns", "schemalocation"):
                 continue
             add_value("{0}/@{1}".format(path, attr_name), attr_name, attr_value)
+            if setting_element and str(attr_name).lower() in ("value", "val"):
+                add_value(path, name or path.rsplit("/", 1)[-1], attr_value)
         for child in list(element):
             walk(child, next_tokens)
 
@@ -8186,9 +8201,10 @@ def oam_group_paths(path_values, marker):
     grouped = {}
     marker_text = "/" + marker + "/"
     for path, values in path_values.items():
-        if marker_text not in path:
+        marker_index = str(path).lower().find(marker_text.lower())
+        if marker_index < 0:
             continue
-        remainder = path.split(marker_text, 1)[1].strip("/")
+        remainder = path[marker_index + len(marker_text):].strip("/")
         if not remainder or "/" not in remainder:
             continue
         object_name, attr_path = remainder.split("/", 1)
@@ -8586,13 +8602,18 @@ def extract_oam_curated_config(flat_paths):
         value = next((str(value).strip() for value in values if str(value or "").strip()), "")
         if not value:
             continue
-        if "/LDAPModules/" in path:
-            remainder = path.split("/LDAPModules/", 1)[1].strip("/")
+        lower_path = path.lower()
+        ldap_marker = "/ldapmodules/"
+        resource_marker = "/resource/ldap/"
+        if ldap_marker in lower_path:
+            marker_index = lower_path.index(ldap_marker)
+            remainder = path[marker_index + len(ldap_marker):].strip("/")
             if remainder and "/" in remainder:
                 name, attr_path = remainder.split("/", 1)
                 add_identity_store_field(name, attr_path, value, path)
-        if "/Resource/LDAP/" in path:
-            remainder = path.split("/Resource/LDAP/", 1)[1].strip("/")
+        if resource_marker in lower_path:
+            marker_index = lower_path.index(resource_marker)
+            remainder = path[marker_index + len(resource_marker):].strip("/")
             if remainder and "/" in remainder:
                 name, attr_path = remainder.split("/", 1)
                 add_identity_store_field(name, attr_path, value, path)
@@ -8787,14 +8808,19 @@ def collect_oam_config_metrics(target, oracle_home, domain_home, progress=None):
         "set +e\n"
         "OH=__ORACLE_HOME__\n"
         "DH=__DOMAIN_HOME__\n"
+        "is_oam_config(){ grep -Eqi 'NGAMServer|WebGate|SessionConfigurations|LDAPModules|OAMServer' \"$1\" 2>/dev/null; }\n"
         "for candidate in \"$DH/config/fmwconfig/oam-config.xml\" \"$DH/config/fmwconfig/oam-config.xml.bak\"; do\n"
-        "  if [ -r \"$candidate\" ]; then\n"
+        "  if [ -r \"$candidate\" ] && is_oam_config \"$candidate\"; then\n"
         "    printf 'IAM_MONITORING_OAM_CONFIG=%s\\n' \"$candidate\"\n"
         "    cat \"$candidate\"\n"
         "    exit 0\n"
         "  fi\n"
         "done\n"
-        "found=$(find \"$DH\" \"$OH\" -maxdepth 6 -name oam-config.xml -type f -readable -print -quit 2>/dev/null)\n"
+        "found=$(find \"$DH\" \"$(dirname \"$DH\")\" \"$(dirname \"$(dirname \"$DH\")\")\" \"$OH\" -maxdepth 7 -name oam-config.xml -type f -readable -print 2>/dev/null | while IFS= read -r candidate; do if is_oam_config \"$candidate\"; then printf '%s\\n' \"$candidate\"; break; fi; done)\n"
+        "if [ -z \"$found\" ]; then\n"
+        "  for candidate in \"$DH/config/fmwconfig/oam-config.xml\" \"$DH/config/fmwconfig/oam-config.xml.bak\"; do [ -r \"$candidate\" ] && { found=\"$candidate\"; break; }; done\n"
+        "fi\n"
+        "if [ -z \"$found\" ]; then found=$(find \"$DH\" \"$OH\" -maxdepth 6 -name oam-config.xml -type f -readable -print -quit 2>/dev/null); fi\n"
         "if [ -n \"$found\" ]; then\n"
         "  printf 'IAM_MONITORING_OAM_CONFIG=%s\\n' \"$found\"\n"
         "  cat \"$found\"\n"
@@ -9132,8 +9158,10 @@ def collect_oam_oauth_rest_metrics(target, weblogic, curated, progress=None):
     domain_candidates = uniqueList(domain_candidates) if "uniqueList" in globals() else list(dict.fromkeys(domain_candidates))
     commands = []
     error = ""
+    tls_fallback_used = False
 
     def call_endpoint(path, safe_label):
+        nonlocal tls_fallback_used
         url = "{0}{1}".format(base_url.rstrip("/"), path)
         command = "curl -sS --connect-timeout 10 --max-time 45 -X GET {url} -u {auth} -H 'content-type: application/json'".format(
             url=shlex.quote(url),
@@ -9141,6 +9169,16 @@ def collect_oam_oauth_rest_metrics(target, weblogic, curated, progress=None):
         )
         commands.append("curl -X GET {0} -u {1}:******".format(url, username))
         result = run_target(target, command, timeout=60)
+        output = str(result.get("output") or "")
+        if result.get("exit_code") != 0 and re.search(r"certificate|self.signed|curl:\s*\(60\)", output, re.I):
+            fallback_command = "curl -k -sS --connect-timeout 10 --max-time 45 -X GET {url} -u {auth} -H 'content-type: application/json'".format(
+                url=shlex.quote(url),
+                auth=shlex.quote("{0}:{1}".format(username, password)),
+            )
+            commands.append("curl -k -X GET {0} -u {1}:****** (certificate fallback)".format(url, username))
+            result = run_target(target, fallback_command, timeout=60)
+            if result.get("exit_code") == 0:
+                tls_fallback_used = True
         return result
 
     selected_domain = ""
@@ -9191,6 +9229,8 @@ def collect_oam_oauth_rest_metrics(target, weblogic, curated, progress=None):
         "resourceServer": resource,
         "clients": clients,
         "commands": commands,
+        "tlsVerification": "certificate-validation-bypassed" if tls_fallback_used else "verified",
+        "warning": "The OAM endpoint certificate was not trusted by the target host. Collection succeeded with curl certificate validation disabled for this read-only REST request." if tls_fallback_used else "",
         "error": "" if selected_domain else (error or "No OAuth identity domain was returned by the OAM REST API."),
         "docUrl": "https://docs.oracle.com/en/middleware/idm/access-manager/12.2.1.4/oroau/op-oam-services-rest-ssa-api-v1-oauthpolicyadmin-oauthidentitydomain-get.html",
     }
@@ -9480,6 +9520,29 @@ def get_oam_metrics(target, environment, app_checks, weblogic_metrics=None, opat
     oracle_home = str(weblogic_metrics.get("oracleHome") or weblogic.get("oracleHome") or oam.get("oracleHome") or "").strip()
     domain_home = str(weblogic_metrics.get("domainHome") or weblogic.get("domainHome") or oam.get("domainHome") or "").strip()
     oam_target = build_weblogic_target(environment, target)
+    certificate_inventory = list(weblogic_metrics.get("serverInventory") or [])
+    certificate_keys = {
+        (str(row.get("listenAddress") or "").strip().lower(), str(row.get("sslPort") or "").strip())
+        for row in certificate_inventory
+    }
+    certificate_urls = [weblogic.get("adminUrl") or ""] + [check.get("url") or "" for check in oam_checks]
+    for endpoint_url in certificate_urls:
+        try:
+            parsed_endpoint = urlparse(str(endpoint_url or "").strip())
+        except Exception:
+            continue
+        if parsed_endpoint.scheme.lower() != "https" or not parsed_endpoint.hostname:
+            continue
+        endpoint_port = str(parsed_endpoint.port or 443)
+        endpoint_key = (parsed_endpoint.hostname.lower(), endpoint_port)
+        if endpoint_key in certificate_keys:
+            continue
+        certificate_keys.add(endpoint_key)
+        certificate_inventory.append({
+            "name": "OAM HTTPS endpoint",
+            "listenAddress": parsed_endpoint.hostname,
+            "sslPort": endpoint_port,
+        })
     if callable(progress):
         progress("Running OAM OPatch, certificate, and configuration probes in parallel.")
 
@@ -9495,7 +9558,7 @@ def get_oam_metrics(target, environment, app_checks, weblogic_metrics=None, opat
         ("opatch", read_opatch),
         ("certificates", lambda: collect_ssl_certificates(
             oam_target,
-            weblogic_metrics.get("serverInventory") or [],
+            certificate_inventory,
             oracle_home=oracle_home,
             domain_home=domain_home,
             progress=progress,
@@ -9563,6 +9626,7 @@ def get_oam_metrics(target, environment, app_checks, weblogic_metrics=None, opat
         config["groups"]["wlstCommands"] = wlst_summary.get("rows") or []
         config["summary"]["wlstRows"] = len(wlst_summary.get("rows") or [])
     config["wlst"] = wlst_summary
+    curated_config["wlstSections"] = wlst_summary.get("sections") or []
 
     return {
         "configured": True,
