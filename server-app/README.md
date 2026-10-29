@@ -153,6 +153,46 @@ sudo systemctl restart iam-monitoring
 - Use `Run Jobs Now` inside an environment to collect immediately.
 - Scheduled collection runs through `/etc/cron.d/iam-monitoring`.
 
+## Email Notifications
+
+Configure outbound email under:
+
+```text
+Administration -> Email Notifications
+```
+
+1. Enter the customer SMTP host, port, optional username/password, sender name,
+   sender email, and security mode (`STARTTLS`, `SSL`, or `None`). The dashboard
+   server must be able to reach that SMTP host and port.
+2. Enable email notifications and save the SMTP settings.
+3. Use `Send Test Email` to confirm SMTP authentication, relay permission, and
+   network access before enabling operational alerts.
+4. Add every operations, middleware, or distribution-list recipient. `Any`
+   receives all severities and optional successful-collection messages;
+   `Warning` receives warning and critical alerts; `Critical` receives only
+   critical alerts.
+5. In `Notification Events`, select the conditions that should generate email
+   and save the policy.
+
+Available events include collector success or failure, overall environment
+status, unreachable hosts, application health checks, CPU, memory, disk,
+WebLogic stuck or hogging threads, WebLogic server state, and recovery. Successful-collection mail is
+disabled by default because it can be noisy; enable it when the customer wants
+confirmation after every scheduled or manual collector run.
+
+Default utilization thresholds are CPU 85%/95%, memory 85%/92%, and disk
+80%/90% for warning/critical. Disk evaluation includes root, refresh,
+`ORACLE_HOME`, `DOMAIN_HOME`, and configured instance-home filesystems returned
+by the collector. Default WebLogic thresholds are 1/5 stuck threads and 1/10
+hogging threads. All thresholds are editable.
+
+An alert is sent after a successful collector run evaluates the saved snapshot.
+Unchanged active alerts are suppressed for the configured repeat interval
+(default six hours); changed conditions are sent immediately. When enabled, a
+single recovery message is sent after previously reported conditions clear.
+Collector failures use the same repeat interval and are delivered as critical
+alerts.
+
 ## Historical Reports
 
 Historical Reports preserve each collector result as a timestamped JSON file for troubleshooting, comparisons, audit evidence, OPatch review, DMS metrics, infrastructure, and application health. Report bodies are stored on disk rather than in SQLite.

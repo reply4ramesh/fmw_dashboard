@@ -20,7 +20,11 @@ from environment_registry import (
     list_environments,
     save_environment,
 )
-from notification_alerts import send_environment_alerts
+from notification_alerts import (
+    send_collection_failure_notification,
+    send_collection_success_notification,
+    send_environment_alerts,
+)
 
 
 APP_ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -753,6 +757,15 @@ def collect_environment_now(db_path, environment_id, trigger="manual", progress=
                 )
         except Exception as exc:
             _emit_progress(progress, "Notification alert check failed: {0}".format(exc))
+        try:
+            success_result = send_collection_success_notification(db_path, environment, dashboard, progress=progress)
+            if success_result.get("sent"):
+                _emit_progress(
+                    progress,
+                    "Collector success notification sent to {0} recipient(s).".format(success_result.get("recipientCount") or 0),
+                )
+        except Exception as exc:
+            _emit_progress(progress, "Collector success notification failed: {0}".format(exc))
         _emit_progress(
             progress,
             "Run updated files: {0}.".format(", ".join([runtime_env_path, snapshot_path])),
@@ -766,6 +779,21 @@ def collect_environment_now(db_path, environment_id, trigger="manual", progress=
         dashboard = _decorate_dashboard(environment, dashboard, trigger, runtime_env_path, duration_ms, snapshot_path, db_path)
         save_environment_snapshot(db_path, environment_id, dashboard)
         _emit_progress(progress, "Updated dashboard snapshot file after error: {0}".format(snapshot_path))
+        try:
+            failure_result = send_collection_failure_notification(
+                db_path,
+                environment,
+                exc,
+                trigger=trigger,
+                progress=progress,
+            )
+            if failure_result.get("sent"):
+                _emit_progress(
+                    progress,
+                    "Collector failure notification sent to {0} recipient(s).".format(failure_result.get("recipientCount") or 0),
+                )
+        except Exception as notification_exc:
+            _emit_progress(progress, "Collector failure notification failed: {0}".format(notification_exc))
         raise
 
 

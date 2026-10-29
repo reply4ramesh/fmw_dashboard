@@ -29,6 +29,68 @@
     --radius-sm: 6px;
 }
 
+/* Version 171 notification policy */
+.notification-policy-v171 {
+    margin-top: 12px;
+}
+
+.notification-policy-v171 .metric-choice-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.notification-policy-v171 .metric-choice {
+    align-items: flex-start;
+    min-height: 76px;
+}
+
+.notification-policy-v171 .metric-choice span {
+    display: grid;
+    gap: 3px;
+}
+
+.notification-policy-v171 .metric-choice strong {
+    color: var(--text-strong);
+}
+
+.notification-policy-v171 .metric-choice small {
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 1.35;
+}
+
+.notification-threshold-heading {
+    margin-top: 22px;
+}
+
+.input-with-suffix {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: stretch;
+}
+
+.input-with-suffix input {
+    border-radius: 4px 0 0 4px;
+}
+
+.input-with-suffix span {
+    display: grid;
+    place-items: center;
+    min-width: 58px;
+    padding: 0 10px;
+    border: 1px solid var(--border);
+    border-left: 0;
+    border-radius: 0 4px 4px 0;
+    background: var(--surface-subtle);
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+@media (max-width: 760px) {
+    .notification-policy-v171 .metric-choice-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
 .summary-grid {
     gap: 12px;
 }
