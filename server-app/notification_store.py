@@ -207,11 +207,21 @@ def save_notification_settings(db_path, payload):
     payload = payload or {}
     current = get_notification_settings(db_path, include_secret=True)
     now = _now_utc_iso()
-    smtp_password = str(payload.get("smtpPassword") or "").strip() or current.get("smtpPassword", "")
+    if "smtpUsername" in payload:
+        smtp_username = str(payload.get("smtpUsername") or "").strip()
+    else:
+        smtp_username = str(current.get("smtpUsername") or "").strip()
+
+    # An explicitly blank username selects an unauthenticated relay. Clear any
+    # password retained from an earlier authenticated SMTP configuration.
+    if not smtp_username:
+        smtp_password = ""
+    else:
+        smtp_password = str(payload.get("smtpPassword") or "").strip() or current.get("smtpPassword", "")
     settings = {
         "smtpHost": str(payload.get("smtpHost") or current.get("smtpHost") or "").strip(),
         "smtpPort": _coerce_int(payload.get("smtpPort"), current.get("smtpPort") or 587),
-        "smtpUsername": str(payload.get("smtpUsername") or current.get("smtpUsername") or "").strip(),
+        "smtpUsername": smtp_username,
         "smtpPassword": smtp_password,
         "senderName": str(payload.get("senderName") or current.get("senderName") or "").strip() or DEFAULT_NOTIFICATION_SETTINGS["senderName"],
         "senderEmail": str(payload.get("senderEmail") or current.get("senderEmail") or "").strip(),

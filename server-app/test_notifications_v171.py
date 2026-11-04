@@ -65,6 +65,7 @@ class NotificationPolicyStoreTests(unittest.TestCase):
             self.db_path,
             {
                 "smtpHost": "mail.example.com",
+                "smtpUsername": "fmw@example.com",
                 "smtpPassword": "secret",
                 "senderEmail": "fmw@example.com",
                 "enabled": True,
@@ -85,6 +86,31 @@ class NotificationPolicyStoreTests(unittest.TestCase):
         self.assertEqual(15, saved["repeatMinutes"])
         self.assertEqual("mail.example.com", saved["smtpHost"])
         self.assertEqual("secret", secret["smtpPassword"])
+
+    def test_blank_username_clears_retained_smtp_authentication(self):
+        save_notification_settings(
+            self.db_path,
+            {
+                "smtpHost": "smtp.gmail.com",
+                "smtpUsername": "fmw@example.com",
+                "smtpPassword": "secret",
+                "senderEmail": "fmw@example.com",
+            },
+        )
+        saved = save_notification_settings(
+            self.db_path,
+            {
+                "smtpHost": "internal-mail-router.oracle.com",
+                "smtpPort": 25,
+                "smtpUsername": "",
+                "smtpPassword": "",
+                "securityMode": "starttls",
+            },
+        )
+        secret = get_notification_settings(self.db_path, include_secret=True)
+        self.assertEqual("", saved["smtpUsername"])
+        self.assertFalse(saved["hasPassword"])
+        self.assertEqual("", secret["smtpPassword"])
 
 
 class NotificationAlertTests(unittest.TestCase):
