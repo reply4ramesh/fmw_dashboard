@@ -23,6 +23,11 @@ class StaticAssetVersionTests(unittest.TestCase):
 
         self.assertIn("v{0}".format(version), app_js)
 
+    def test_recipient_submit_uses_form_attribute_not_shadowed_id_property(self):
+        app_js = (APP_ROOT / "static" / "assets" / "app.js").read_text(encoding="utf-8")
+        self.assertIn('form.getAttribute("id")!=="recipient-form"', app_js)
+        self.assertIn('event.preventDefault();event.stopImmediatePropagation();saveRecipient(form)', app_js)
+
 
 if __name__ == "__main__":
     unittest.main()
