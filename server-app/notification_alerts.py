@@ -212,10 +212,20 @@ def _recipients_for_severity(db_path, severity):
     return [recipient for recipient in list_notification_recipients(db_path) if _recipient_matches(recipient, severity)]
 
 
+def _environment_notifications_enabled(settings, environment):
+    if (settings or {}).get("environmentScope") != "selected":
+        return True
+    environment_id = str((environment or {}).get("id") or "").strip()
+    selected_ids = {str(item or "").strip() for item in (settings or {}).get("environmentIds", [])}
+    return bool(environment_id) and environment_id in selected_ids
+
+
 def send_environment_alerts(db_path, environment, dashboard, progress=None):
     settings = get_notification_settings(db_path, include_secret=True)
     if not settings.get("enabled"):
         return {"sent": False, "reason": "disabled"}
+    if not _environment_notifications_enabled(settings, environment):
+        return {"sent": False, "reason": "environment_disabled"}
     if not _settings_ready(settings):
         return {"sent": False, "reason": "smtp_not_configured"}
 
@@ -278,6 +288,8 @@ def send_collection_success_notification(db_path, environment, dashboard, progre
     settings = get_notification_settings(db_path, include_secret=True)
     if not _settings_ready(settings) or not _event_enabled(settings, "collectorSuccess"):
         return {"sent": False, "reason": "disabled"}
+    if not _environment_notifications_enabled(settings, environment):
+        return {"sent": False, "reason": "environment_disabled"}
     recipients = _recipients_for_severity(db_path, "healthy")
     if not recipients:
         return {"sent": False, "reason": "no_matching_recipients"}
@@ -304,6 +316,8 @@ def send_collection_failure_notification(db_path, environment, error, trigger="s
     settings = get_notification_settings(db_path, include_secret=True)
     if not _settings_ready(settings) or not _event_enabled(settings, "collectorFailure"):
         return {"sent": False, "reason": "disabled"}
+    if not _environment_notifications_enabled(settings, environment):
+        return {"sent": False, "reason": "environment_disabled"}
     recipients = _recipients_for_severity(db_path, "critical")
     if not recipients:
         return {"sent": False, "reason": "no_matching_recipients"}

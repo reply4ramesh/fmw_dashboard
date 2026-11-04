@@ -59,6 +59,8 @@ class NotificationPolicyStoreTests(unittest.TestCase):
         self.assertEqual("secret", settings["smtpPassword"])
         self.assertEqual(DEFAULT_NOTIFICATION_SETTINGS["eventTypes"], settings["eventTypes"])
         self.assertEqual(360, settings["repeatMinutes"])
+        self.assertEqual("all", settings["environmentScope"])
+        self.assertEqual([], settings["environmentIds"])
 
     def test_policy_round_trip_normalizes_thresholds_and_preserves_smtp(self):
         save_notification_settings(
@@ -111,6 +113,20 @@ class NotificationPolicyStoreTests(unittest.TestCase):
         self.assertEqual("", saved["smtpUsername"])
         self.assertFalse(saved["hasPassword"])
         self.assertEqual("", secret["smtpPassword"])
+
+    def test_environment_scope_round_trip_defaults_to_all_and_normalizes_ids(self):
+        defaults = get_notification_settings(self.db_path)
+        self.assertEqual("all", defaults["environmentScope"])
+        self.assertEqual([], defaults["environmentIds"])
+        saved = save_notification_settings(
+            self.db_path,
+            {
+                "environmentScope": "selected",
+                "environmentIds": ["oig-prod", "oud-prod", "oig-prod", ""],
+            },
+        )
+        self.assertEqual("selected", saved["environmentScope"])
+        self.assertEqual(["oig-prod", "oud-prod"], saved["environmentIds"])
 
 
 class NotificationAlertTests(unittest.TestCase):
@@ -238,6 +254,34 @@ class NotificationAlertTests(unittest.TestCase):
         self.assertEqual(2, failure["recipientCount"])
         self.assertEqual("deduped", duplicate["reason"])
         self.assertEqual(2, send_mail.call_count)
+
+    @mock.patch("notification_alerts._send_mail")
+    def test_selected_environment_scope_blocks_every_notification_type(self, send_mail):
+        self._configure_delivery(success=True)
+        save_notification_settings(
+            self.db_path,
+            {"environmentScope": "selected", "environmentIds": ["another-environment"]},
+        )
+        dashboard = {"status": "critical", "server": {"reachable": True, "memory": {"usedPercent": 99}}}
+        alert = send_environment_alerts(self.db_path, self.environment, dashboard)
+        success = send_collection_success_notification(self.db_path, self.environment, dashboard)
+        failure = send_collection_failure_notification(self.db_path, self.environment, "SSH timed out")
+        self.assertEqual("environment_disabled", alert["reason"])
+        self.assertEqual("environment_disabled", success["reason"])
+        self.assertEqual("environment_disabled", failure["reason"])
+        self.assertEqual(0, send_mail.call_count)
+
+    @mock.patch("notification_alerts._send_mail")
+    def test_selected_environment_scope_allows_selected_profile(self, send_mail):
+        self._configure_delivery(success=True)
+        save_notification_settings(
+            self.db_path,
+            {"environmentScope": "selected", "environmentIds": [self.environment["id"]]},
+        )
+        dashboard = {"status": "healthy", "server": {"reachable": True}, "job": {"trigger": "manual"}}
+        result = send_collection_success_notification(self.db_path, self.environment, dashboard)
+        self.assertTrue(result["sent"])
+        self.assertEqual(1, send_mail.call_count)
 
 
 if __name__ == "__main__":

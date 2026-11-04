@@ -28,6 +28,12 @@ class StaticAssetVersionTests(unittest.TestCase):
         self.assertIn('form.getAttribute("id")!=="recipient-form"', app_js)
         self.assertIn('event.preventDefault();event.stopImmediatePropagation();saveRecipient(form)', app_js)
 
+    def test_notification_profile_scope_controls_are_present(self):
+        app_js = (APP_ROOT / "static" / "assets" / "app.js").read_text(encoding="utf-8")
+        self.assertIn("Notification Profiles", app_js)
+        self.assertIn('data-notification-scope-form', app_js)
+        self.assertIn('environmentScope:environmentScope,environmentIds:environmentIds', app_js)
+
 
 if __name__ == "__main__":
     unittest.main()

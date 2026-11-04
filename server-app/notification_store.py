@@ -41,6 +41,8 @@ DEFAULT_NOTIFICATION_SETTINGS = {
         "hoggingThreadsCritical": 10,
     },
     "repeatMinutes": 360,
+    "environmentScope": "all",
+    "environmentIds": [],
 }
 
 VALID_SECURITY_MODES = {"none", "starttls", "ssl"}
@@ -83,6 +85,8 @@ def _connect(db_path):
     _ensure_column(conn, "notification_settings", "event_types", "TEXT NOT NULL DEFAULT '{}'")
     _ensure_column(conn, "notification_settings", "thresholds", "TEXT NOT NULL DEFAULT '{}'")
     _ensure_column(conn, "notification_settings", "repeat_minutes", "INTEGER NOT NULL DEFAULT 360")
+    _ensure_column(conn, "notification_settings", "environment_scope", "TEXT NOT NULL DEFAULT 'all'")
+    _ensure_column(conn, "notification_settings", "environment_ids", "TEXT NOT NULL DEFAULT '[]'")
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS notification_recipients (
@@ -165,6 +169,26 @@ def _normalize_thresholds(value):
     return result
 
 
+def _normalize_environment_scope(value):
+    return "selected" if str(value or "").strip().lower() == "selected" else "all"
+
+
+def _normalize_environment_ids(value):
+    if isinstance(value, str):
+        try:
+            value = json.loads(value or "[]")
+        except (TypeError, ValueError):
+            value = []
+    if not isinstance(value, (list, tuple)):
+        return []
+    result = []
+    for item in value:
+        environment_id = str(item or "").strip()
+        if environment_id and environment_id not in result:
+            result.append(environment_id)
+    return result
+
+
 def _settings_from_row(row, include_secret=False):
     settings = dict(DEFAULT_NOTIFICATION_SETTINGS)
     if row:
@@ -181,6 +205,8 @@ def _settings_from_row(row, include_secret=False):
                 "eventTypes": _normalize_event_types(row["event_types"]),
                 "thresholds": _normalize_thresholds(row["thresholds"]),
                 "repeatMinutes": _bounded_int(row["repeat_minutes"], 360, 5, 10080),
+                "environmentScope": _normalize_environment_scope(row["environment_scope"]),
+                "environmentIds": _normalize_environment_ids(row["environment_ids"]),
             }
         )
     if include_secret:
@@ -195,7 +221,8 @@ def get_notification_settings(db_path, include_secret=False):
         row = conn.execute(
             """
             SELECT smtp_host, smtp_port, smtp_username, smtp_password, sender_name,
-                   sender_email, security_mode, enabled, event_types, thresholds, repeat_minutes
+                   sender_email, security_mode, enabled, event_types, thresholds, repeat_minutes,
+                   environment_scope, environment_ids
             FROM notification_settings
             WHERE id = 1
             """
@@ -230,6 +257,8 @@ def save_notification_settings(db_path, payload):
         "eventTypes": _normalize_event_types(payload.get("eventTypes", current.get("eventTypes"))),
         "thresholds": _normalize_thresholds(payload.get("thresholds", current.get("thresholds"))),
         "repeatMinutes": _bounded_int(payload.get("repeatMinutes"), current.get("repeatMinutes") or 360, 5, 10080),
+        "environmentScope": _normalize_environment_scope(payload.get("environmentScope", current.get("environmentScope"))),
+        "environmentIds": _normalize_environment_ids(payload.get("environmentIds", current.get("environmentIds"))),
     }
 
     with closing(_connect(db_path)) as conn:
@@ -240,7 +269,8 @@ def save_notification_settings(db_path, payload):
                 UPDATE notification_settings
                 SET smtp_host = ?, smtp_port = ?, smtp_username = ?, smtp_password = ?,
                     sender_name = ?, sender_email = ?, security_mode = ?, enabled = ?,
-                    event_types = ?, thresholds = ?, repeat_minutes = ?, updated_at = ?
+                    event_types = ?, thresholds = ?, repeat_minutes = ?,
+                    environment_scope = ?, environment_ids = ?, updated_at = ?
                 WHERE id = 1
                 """,
                 (
@@ -255,6 +285,8 @@ def save_notification_settings(db_path, payload):
                     json.dumps(settings["eventTypes"], sort_keys=True),
                     json.dumps(settings["thresholds"], sort_keys=True),
                     settings["repeatMinutes"],
+                    settings["environmentScope"],
+                    json.dumps(settings["environmentIds"]),
                     now,
                 ),
             )
@@ -264,9 +296,10 @@ def save_notification_settings(db_path, payload):
                 INSERT INTO notification_settings(
                     id, smtp_host, smtp_port, smtp_username, smtp_password,
                     sender_name, sender_email, security_mode, enabled,
-                    event_types, thresholds, repeat_minutes, created_at, updated_at
+                    event_types, thresholds, repeat_minutes, environment_scope,
+                    environment_ids, created_at, updated_at
                 )
-                VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     settings["smtpHost"],
@@ -280,6 +313,8 @@ def save_notification_settings(db_path, payload):
                     json.dumps(settings["eventTypes"], sort_keys=True),
                     json.dumps(settings["thresholds"], sort_keys=True),
                     settings["repeatMinutes"],
+                    settings["environmentScope"],
+                    json.dumps(settings["environmentIds"]),
                     now,
                     now,
                 ),
