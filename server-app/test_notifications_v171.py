@@ -6,6 +6,8 @@ from contextlib import closing
 from unittest import mock
 
 from notification_alerts import (
+    _email_html,
+    _send_mail,
     build_dashboard_alert_events,
     send_collection_failure_notification,
     send_collection_success_notification,
@@ -190,6 +192,38 @@ class NotificationAlertTests(unittest.TestCase):
         )["severity"])
         self.assertEqual("critical", by_type["stuckThreads"]["severity"])
         self.assertEqual("warning", by_type["hoggingThreads"]["severity"])
+
+    def test_html_alert_highlights_percentages_and_escapes_collected_values(self):
+        rendered = _email_html(
+            "2 alerts detected", "critical", "OIG <Production>", "critical", "2026-11-04T20:40:11Z",
+            "Review the highlighted conditions.",
+            events=[{
+                "severity": "critical",
+                "title": "Primary server disk utilization",
+                "detail": "Root filesystem is 96.0% used; warning 80%, critical 90%.",
+            }],
+        )
+        self.assertIn("OIG &lt;Production&gt;", rendered)
+        self.assertIn(">96.0%</strong>", rendered)
+        self.assertIn(">80%</strong>", rendered)
+        self.assertIn(">90%</strong>", rendered)
+        self.assertIn("background:#fef3f2", rendered)
+
+    @mock.patch("notification_alerts.smtplib.SMTP")
+    def test_send_mail_includes_plain_text_and_html_alternatives(self, smtp):
+        settings = {
+            "smtpHost": "mail.example.com", "smtpPort": 25, "smtpUsername": "",
+            "smtpPassword": "", "senderName": "FMW Operations Console",
+            "senderEmail": "fmw@example.com", "securityMode": "none",
+        }
+        _send_mail(
+            settings, [{"email": "ops@example.com"}], "Alert", "Plain fallback",
+            "<html><body><strong>HTML alert</strong></body></html>",
+        )
+        message = smtp.return_value.__enter__.return_value.send_message.call_args[0][0]
+        self.assertTrue(message.is_multipart())
+        self.assertEqual("Plain fallback\n", message.get_body(preferencelist=("plain",)).get_content())
+        self.assertIn("HTML alert", message.get_body(preferencelist=("html",)).get_content())
 
     def test_disabled_event_is_not_evaluated(self):
         self.settings["eventTypes"]["memory"] = False

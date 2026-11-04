@@ -1,5 +1,7 @@
 import json
+import html
 import os
+import re
 import smtplib
 import ssl
 import time
@@ -176,7 +178,88 @@ def _settings_ready(settings):
     return bool(settings.get("enabled") and settings.get("smtpHost") and settings.get("smtpPort") and settings.get("senderEmail"))
 
 
-def _send_mail(settings, recipients, subject, body):
+def _escape(value):
+    return html.escape(str(value if value is not None else "-"), quote=True)
+
+
+def _highlight_percentages(value, color):
+    escaped = _escape(value)
+    return re.sub(
+        r"(?<![A-Za-z0-9_-])(\d+(?:\.\d+)?%)(?![A-Za-z0-9_-])",
+        r'<strong style="color:{0};font-size:15px;">\1</strong>'.format(color),
+        escaped,
+    )
+
+
+def _email_html(title, severity, environment_name, status, collected, intro, events=None, details=None):
+    severity = str(severity or "healthy").lower()
+    palette = {
+        "critical": {"accent": "#b42318", "soft": "#fef3f2", "label": "CRITICAL"},
+        "down": {"accent": "#b42318", "soft": "#fef3f2", "label": "DOWN"},
+        "warning": {"accent": "#b54708", "soft": "#fffaeb", "label": "WARNING"},
+        "healthy": {"accent": "#067647", "soft": "#ecfdf3", "label": "HEALTHY"},
+    }.get(severity, {"accent": "#175cd3", "soft": "#eff8ff", "label": severity.upper() or "INFO"})
+    rows = []
+    for label, value in details or []:
+        rows.append(
+            '<tr><td style="padding:8px 12px;color:#667085;font-size:13px;border-bottom:1px solid #eaecf0;width:145px;">{0}</td>'
+            '<td style="padding:8px 12px;color:#101828;font-size:13px;font-weight:600;border-bottom:1px solid #eaecf0;">{1}</td></tr>'.format(
+                _escape(label), _escape(value)
+            )
+        )
+    event_cards = []
+    for event in events or []:
+        event_severity = str(event.get("severity") or "warning").lower()
+        event_palette = palette if event_severity == severity else {
+            "accent": "#b54708" if event_severity == "warning" else "#b42318",
+            "soft": "#fffaeb" if event_severity == "warning" else "#fef3f2",
+            "label": event_severity.upper(),
+        }
+        event_cards.append(
+            '<tr><td style="padding:0 0 10px 0;">'
+            '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #eaecf0;border-left:4px solid {0};border-radius:6px;background:#ffffff;">'
+            '<tr><td style="padding:13px 14px;">'
+            '<span style="display:inline-block;padding:3px 8px;border-radius:12px;background:{1};color:{0};font-size:11px;font-weight:700;">{2}</span>'
+            '<div style="margin-top:8px;color:#101828;font-size:14px;font-weight:700;">{3}</div>'
+            '<div style="margin-top:5px;color:#475467;font-size:13px;line-height:1.55;">{4}</div>'
+            '</td></tr></table></td></tr>'.format(
+                event_palette["accent"],
+                event_palette["soft"],
+                _escape(event_palette["label"]),
+                _escape(event.get("title")),
+                _highlight_percentages(event.get("detail"), event_palette["accent"]),
+            )
+        )
+    event_section = ""
+    if event_cards:
+        event_section = (
+            '<div style="margin:22px 0 8px;color:#344054;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;">Alert details</div>'
+            '<table role="presentation" width="100%" cellpadding="0" cellspacing="0">{0}</table>'.format("".join(event_cards))
+        )
+    return """<!doctype html>
+<html><body style="margin:0;padding:0;background:#f2f4f7;font-family:Arial,Helvetica,sans-serif;color:#101828;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f2f4f7;"><tr><td align="center" style="padding:24px 12px;">
+<table role="presentation" width="640" cellpadding="0" cellspacing="0" style="width:100%;max-width:640px;background:#ffffff;border:1px solid #d0d5dd;border-radius:8px;overflow:hidden;">
+<tr><td style="padding:18px 22px;background:#161616;border-bottom:3px solid #c74634;"><span style="color:#ff312d;font-size:18px;font-weight:800;">ORACLE</span><span style="color:#ffffff;font-size:14px;font-weight:700;margin-left:12px;">FMW OPERATIONS CONSOLE</span></td></tr>
+<tr><td style="padding:24px 24px 8px;">
+<span style="display:inline-block;padding:5px 10px;border-radius:14px;background:{soft};color:{accent};font-size:11px;font-weight:800;">{severity_label}</span>
+<h1 style="margin:12px 0 6px;font-size:22px;line-height:1.25;color:#101828;">{title}</h1>
+<p style="margin:0;color:#475467;font-size:14px;line-height:1.6;">{intro}</p>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:20px;border:1px solid #eaecf0;border-radius:6px;border-collapse:separate;border-spacing:0;">
+<tr><td style="padding:12px;background:{soft};color:#344054;font-size:13px;"><strong>Environment:</strong> {environment}<br><strong>Status:</strong> <span style="color:{accent};font-weight:800;">{status}</span><br><strong>Collected:</strong> {collected}</td></tr>
+{rows}
+</table>
+{event_section}
+</td></tr>
+<tr><td style="padding:18px 24px 22px;color:#667085;font-size:11px;line-height:1.5;border-top:1px solid #eaecf0;">Generated automatically by FMW Operations Console. Alert delivery follows the configured profile scope, severity routing, and repeat interval.</td></tr>
+</table></td></tr></table></body></html>""".format(
+        soft=palette["soft"], accent=palette["accent"], severity_label=_escape(palette["label"]),
+        title=_escape(title), intro=_escape(intro), environment=_escape(environment_name),
+        status=_escape(status), collected=_escape(collected), rows="".join(rows), event_section=event_section,
+    )
+
+
+def _send_mail(settings, recipients, subject, body, html_body=None):
     message = EmailMessage()
     sender_name = settings.get("senderName") or "FMW Operations Console"
     sender_email = settings.get("senderEmail") or settings.get("smtpUsername") or ""
@@ -184,6 +267,8 @@ def _send_mail(settings, recipients, subject, body):
     message["From"] = "{0} <{1}>".format(sender_name, sender_email)
     message["To"] = ", ".join([recipient["email"] for recipient in recipients])
     message.set_content(body)
+    if html_body:
+        message.add_alternative(html_body, subtype="html")
 
     host = settings.get("smtpHost")
     port = int(settings.get("smtpPort") or 0)
@@ -249,7 +334,12 @@ def send_environment_alerts(db_path, environment, dashboard, progress=None):
                 environment_name = environment.get("name") or environment_id or "environment"
                 subject = "FMW Operations Console recovered: {0}".format(environment_name)
                 body = "The latest collector snapshot no longer contains the previous alert conditions.\n\nEnvironment: {0}\nStatus: {1}".format(environment_name, (dashboard or {}).get("status") or "healthy")
-                _send_mail(settings, recipients, subject, body)
+                html_body = _email_html(
+                    "Environment recovered", "healthy", environment_name,
+                    (dashboard or {}).get("status") or "healthy", (dashboard or {}).get("generatedAt") or "-",
+                    "The latest collector snapshot no longer contains the previous alert conditions.",
+                )
+                _send_mail(settings, recipients, subject, body, html_body)
                 sent = True
                 recipient_count = len(recipients)
         _write_alert_state(state_path, {"signature": "", "sentAt": now, "severity": "healthy"})
@@ -277,7 +367,14 @@ def send_environment_alerts(db_path, environment, dashboard, progress=None):
         body_lines.append("[{0}] {1}: {2}".format(str(event.get("severity") or "").upper(), event.get("title"), event.get("detail")))
     if len(events) > 30:
         body_lines.append("... {0} more alert(s) omitted from this email.".format(len(events) - 30))
-    _send_mail(settings, recipients, subject, "\n".join(body_lines))
+    html_body = _email_html(
+        "{0} alert{1} detected".format(len(events), "" if len(events) == 1 else "s"),
+        severity, environment_name, (dashboard or {}).get("status") or severity,
+        (dashboard or {}).get("generatedAt") or "-",
+        "Review the highlighted conditions and thresholds below.", events=events[:30],
+        details=[("Alert count", len(events))],
+    )
+    _send_mail(settings, recipients, subject, "\n".join(body_lines), html_body)
     _write_alert_state(state_path, {"signature": signature, "sentAt": now, "severity": severity})
     if progress:
         progress("Sent {0} notification alert to {1} recipient(s).".format(severity, len(recipients)))
@@ -305,7 +402,13 @@ def send_collection_success_notification(db_path, environment, dashboard, progre
         "Duration: {0} ms".format(job.get("durationMs") or 0),
         "Collected: {0}".format((dashboard or {}).get("generatedAt") or "-"),
     ])
-    _send_mail(settings, recipients, subject, body)
+    html_body = _email_html(
+        "Collection completed", "healthy", environment_name,
+        (dashboard or {}).get("status") or "healthy", (dashboard or {}).get("generatedAt") or "-",
+        "The environment collector completed successfully.",
+        details=[("Trigger", job.get("trigger") or "scheduled"), ("Duration", "{0} ms".format(job.get("durationMs") or 0))],
+    )
+    _send_mail(settings, recipients, subject, body, html_body)
     _write_alert_state(_alert_state_path(db_path, environment.get("id"), prefix="failure"), {"signature": "", "sentAt": int(time.time()), "severity": "healthy"})
     if progress:
         progress("Sent collector success notification to {0} recipient(s).".format(len(recipients)))
@@ -338,7 +441,12 @@ def send_collection_failure_notification(db_path, environment, error, trigger="s
         "Trigger: {0}".format(trigger or "scheduled"),
         "Error: {0}".format(signature),
     ])
-    _send_mail(settings, recipients, subject, body)
+    html_body = _email_html(
+        "Collector failed", "critical", environment_name, "failed", "-",
+        "The environment collector failed before completing its snapshot.",
+        details=[("Trigger", trigger or "scheduled"), ("Error", signature)],
+    )
+    _send_mail(settings, recipients, subject, body, html_body)
     _write_alert_state(state_path, {"signature": signature, "sentAt": now, "severity": "critical"})
     if progress:
         progress("Sent collector failure notification to {0} recipient(s).".format(len(recipients)))
