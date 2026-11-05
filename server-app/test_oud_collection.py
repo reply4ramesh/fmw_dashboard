@@ -2,16 +2,51 @@ import unittest
 from unittest.mock import patch
 
 from collector import (
+    collect_opatch_inventory,
     collect_oud_proxy_configuration,
     collect_oud_replication_server_configuration,
     collect_single_oud_metrics,
     oud_secure_command,
     parse_dsconfig_list,
 )
-from config_store import LEGACY_DEFAULT_OUD_CHECKS, normalize_environment
+from config_store import LEGACY_DEFAULT_OUD_CHECKS, normalize_environment, normalize_oud_oracle_home_path
 
 
 class OudCollectionTests(unittest.TestCase):
+    def test_oud_oracle_home_strips_instance_path_below_standard_oracle_home(self):
+        self.assertEqual(
+            "/refresh/home/oracle/Oracle/Middleware/Oracle_Home",
+            normalize_oud_oracle_home_path(
+                "/refresh/home/oracle/Oracle/Middleware/Oracle_Home/asinst_ds2/OUD/bin"
+            ),
+        )
+        self.assertEqual(
+            "/opt/oracle/middleware/OUD14/oud",
+            normalize_oud_oracle_home_path("/opt/oracle/middleware/OUD14/oud"),
+        )
+
+    @patch("collector.run_target")
+    def test_opatch_inventory_searches_configured_home_and_bounded_parents(self, run_target_mock):
+        run_target_mock.return_value = {
+            "exit_code": 0,
+            "output": "OPATCH_PATH=/refresh/home/oracle/Oracle/Middleware/Oracle_Home/OPatch/opatch\n",
+        }
+
+        result = collect_opatch_inventory(
+            {"mode": "ssh"},
+            "/refresh/home/oracle/Oracle/Middleware/Oracle_Home/asinst_ds2/OUD/bin",
+            label="OUD",
+        )
+
+        command = run_target_mock.call_args[0][1]
+        self.assertIn('candidate="$ORACLE_HOME"; depth=0', command)
+        self.assertIn('[ "$depth" -le 6 ]', command)
+        self.assertIn('$candidate/OPatch/opatch', command)
+        self.assertEqual(
+            "/refresh/home/oracle/Oracle/Middleware/Oracle_Home/OPatch/opatch",
+            result["opatchPath"],
+        )
+
     def test_secure_command_handles_noclobber_and_clears_inherited_java_flags(self):
         command = oud_secure_command(
             "/opt/oracle/instances/DS1/bin",

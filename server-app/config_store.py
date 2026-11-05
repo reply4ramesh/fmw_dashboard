@@ -328,6 +328,16 @@ def has_weblogic_profile(products=None, weblogic=None):
     )
 
 
+def normalize_oud_oracle_home_path(value):
+    path = str(value or "").strip().rstrip("/")
+    if not path:
+        return ""
+    match = re.match(r"^(.*?/oracle_home)(?:/.*)?$", path, re.I)
+    if match:
+        return match.group(1)
+    return path
+
+
 def normalize_ssh_mode(value, fallback="user_password_sudo"):
     text = str(value or "").strip().lower()
     if text in ("root_password", "user_password", "user_password_sudo", "root_key", "user_key", "user_key_sudo"):
@@ -781,6 +791,12 @@ def normalize_environment(payload, existing=None):
             allow_blank=coerce_bool(oud_payload.get("clearBindPassword"), False),
         )
     )
+    oud_oracle_home = normalize_oud_oracle_home_path(
+        oud_payload.get("oracleHome")
+        or existing_oud.get("oracleHome")
+        or base["oud"].get("oracleHome")
+        or ""
+    )
     derived_ldap_url = "ldap://localhost:{0}".format(ldap_port)
     existing_weblogic_profile = has_weblogic_profile(existing_products, existing_weblogic)
     payload_weblogic_profile = has_weblogic_profile(products_payload, weblogic_payload)
@@ -939,10 +955,7 @@ def normalize_environment(payload, existing=None):
                 coerce_bool(existing_oud.get("weblogicEnabled"), False),
             ),
             "oracleHome": str(
-                oud_payload.get("oracleHome")
-                or existing_oud.get("oracleHome")
-                or base["oud"].get("oracleHome")
-                or ""
+                oud_oracle_home
             ).strip(),
             "domainHome": str(
                 oud_payload.get("domainHome")

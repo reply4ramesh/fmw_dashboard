@@ -35,6 +35,7 @@ class StaticAssetVersionTests(unittest.TestCase):
         self.assertIn('environmentScope:environmentScope,environmentIds:environmentIds', app_js)
         self.assertIn('!Object.prototype.hasOwnProperty.call(rawProducts,"weblogic")&&hasWeblogicProfile(environment)', app_js)
         self.assertIn('const checked=Boolean((oud||{}).weblogicEnabled||((products||{}).weblogic&&(weblogic||{}).enabled))', app_js)
+        self.assertIn("Use the product ORACLE_HOME that contains OPatch", app_js)
 
 
 if __name__ == "__main__":
