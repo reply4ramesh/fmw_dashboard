@@ -33,6 +33,8 @@ class StaticAssetVersionTests(unittest.TestCase):
         self.assertIn("Notification Profiles", app_js)
         self.assertIn('data-notification-scope-form', app_js)
         self.assertIn('environmentScope:environmentScope,environmentIds:environmentIds', app_js)
+        self.assertIn('!Object.prototype.hasOwnProperty.call(rawProducts,"weblogic")&&hasWeblogicProfile(environment)', app_js)
+        self.assertIn('const checked=Boolean((oud||{}).weblogicEnabled||((products||{}).weblogic&&(weblogic||{}).enabled))', app_js)
 
 
 if __name__ == "__main__":

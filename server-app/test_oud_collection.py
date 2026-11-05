@@ -150,6 +150,73 @@ proxy-we1         : proxy-ldap         : true
         self.assertFalse(existing["products"]["weblogic"])
         self.assertEqual(existing["oud"]["checks"], [])
 
+    def test_saving_standalone_oud_does_not_restore_weblogic_from_stale_paths(self):
+        existing = normalize_environment({
+            "name": "OUD with old WebLogic data",
+            "environmentType": "oud",
+            "products": {"oud": True, "weblogic": True},
+            "server": {"host": "ds1.example.com"},
+            "oud": {"host": "ds1.example.com", "oracleHome": "/opt/oracle/oud"},
+            "weblogic": {
+                "enabled": True,
+                "adminUrl": "https://ds1.example.com:7002/console",
+                "oracleHome": "/opt/oracle/oud",
+                "domainHome": "/opt/oracle/domains/oud",
+                "adminHost": {"host": "ds1.example.com"},
+            },
+        })
+        saved = normalize_environment({
+            "name": "Standalone OUD",
+            "environmentType": "oud",
+            "products": {"oud": True, "weblogic": False},
+            "server": {"host": "ds1.example.com"},
+            "oud": {
+                "host": "ds1.example.com",
+                "oracleHome": "/opt/oracle/oud",
+                "weblogicEnabled": False,
+            },
+            "weblogic": {
+                "enabled": False,
+                "adminUrl": "https://ds1.example.com:7002/console",
+                "oracleHome": "/opt/oracle/oud",
+                "domainHome": "/opt/oracle/domains/oud",
+                "adminHost": {"host": "ds1.example.com"},
+            },
+        }, existing)
+
+        self.assertTrue(saved["products"]["oud"])
+        self.assertFalse(saved["products"]["weblogic"])
+        self.assertFalse(saved["weblogic"]["enabled"])
+        self.assertEqual("", saved["weblogic"]["adminUrl"])
+        self.assertEqual("", saved["weblogic"]["oracleHome"])
+        self.assertEqual("", saved["weblogic"]["domainHome"])
+        self.assertEqual("", saved["weblogic"]["adminHost"]["host"])
+
+    def test_saving_oud_with_weblogic_keeps_explicit_selection(self):
+        saved = normalize_environment({
+            "name": "OUD with WebLogic",
+            "environmentType": "oud",
+            "products": {"oud": True, "weblogic": True},
+            "server": {"host": "admin.example.com"},
+            "oud": {
+                "host": "ds1.example.com",
+                "oracleHome": "/opt/oracle/oud",
+                "weblogicEnabled": True,
+            },
+            "weblogic": {
+                "enabled": True,
+                "adminUrl": "https://admin.example.com:7002/console",
+                "oracleHome": "/opt/oracle/oud",
+                "domainHome": "/opt/oracle/domains/oud",
+                "adminHost": {"host": "admin.example.com"},
+            },
+        })
+
+        self.assertTrue(saved["products"]["oud"])
+        self.assertTrue(saved["products"]["weblogic"])
+        self.assertTrue(saved["weblogic"]["enabled"])
+        self.assertEqual("https://admin.example.com:7002/console", saved["weblogic"]["adminUrl"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -789,7 +789,11 @@ def normalize_environment(payload, existing=None):
         existing_weblogic.get("enabled", products.get("weblogic")),
     )
     if environment_type == "oud":
-        if existing_weblogic_profile or payload_weblogic_profile:
+        if "enabled" in weblogic_payload:
+            weblogic_enabled = coerce_bool(weblogic_payload.get("enabled"), False)
+        elif "weblogic" in products_payload:
+            weblogic_enabled = coerce_bool(products_payload.get("weblogic"), False)
+        elif existing_weblogic_profile or payload_weblogic_profile:
             weblogic_enabled = True
         products["weblogic"] = bool(weblogic_enabled)
     oid_weblogic_enabled = coerce_bool(
@@ -852,9 +856,8 @@ def normalize_environment(payload, existing=None):
         "weblogic": {
             "enabled": weblogic_enabled,
             "adminUrl": str(
-                weblogic_payload.get("adminUrl")
-                or existing_weblogic.get("adminUrl")
-                or ""
+                (weblogic_payload.get("adminUrl")
+                or existing_weblogic.get("adminUrl")) if weblogic_enabled else ""
             ).strip(),
             "adminUsername": str(
                 weblogic_payload.get("adminUsername")
@@ -863,29 +866,29 @@ def normalize_environment(payload, existing=None):
                 or "weblogic"
             ).strip() or "weblogic",
             "adminPassword": preserve_secret(
-                weblogic_payload.get("adminPassword"),
-                existing_weblogic.get("adminPassword"),
+                weblogic_payload.get("adminPassword") if weblogic_enabled else "",
+                existing_weblogic.get("adminPassword") if weblogic_enabled else "",
                 allow_blank=coerce_bool(weblogic_payload.get("clearAdminPassword"), False),
             ),
             "oracleHome": str(
-                weblogic_payload.get("oracleHome")
+                (weblogic_payload.get("oracleHome")
                 or existing_weblogic.get("oracleHome")
                 or (existing_oam.get("oracleHome") if products.get("oam") else "")
                 or (existing_oig.get("oracleHome") if products.get("oig") else "")
                 or base["weblogic"].get("oracleHome")
-                or ""
+                or "") if weblogic_enabled else ""
             ).strip(),
             "domainHome": str(
-                weblogic_payload.get("domainHome")
+                (weblogic_payload.get("domainHome")
                 or existing_weblogic.get("domainHome")
                 or (existing_oam.get("domainHome") if products.get("oam") else "")
                 or (existing_oig.get("domainHome") if products.get("oig") else "")
                 or base["weblogic"].get("domainHome")
-                or ""
+                or "") if weblogic_enabled else ""
             ).strip(),
             "adminHost": normalize_ssh_profile_payload(
-                weblogic_payload.get("adminHost"),
-                existing_weblogic.get("adminHost"),
+                weblogic_payload.get("adminHost") if weblogic_enabled else {},
+                existing_weblogic.get("adminHost") if weblogic_enabled else {},
                 default_host="",
                 default_username="oracle",
                 default_port=22,
@@ -898,8 +901,8 @@ def normalize_environment(payload, existing=None):
                 or base["weblogic"]["jstatPath"]
             ).strip(),
             "serverNames": parse_csv_or_list(
-                weblogic_payload.get("serverNames"),
-                existing_weblogic.get("serverNames") or default_weblogic_server_names(products) or base["weblogic"]["serverNames"],
+                weblogic_payload.get("serverNames") if weblogic_enabled else [],
+                (existing_weblogic.get("serverNames") or default_weblogic_server_names(products) or base["weblogic"]["serverNames"]) if weblogic_enabled else [],
             ),
         },
         "oam": {
