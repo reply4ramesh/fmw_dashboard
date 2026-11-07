@@ -3,9 +3,11 @@ from unittest.mock import patch
 
 from collector import (
     collect_opatch_inventory,
+    collect_oud_monitoring_and_policies,
     collect_oud_proxy_configuration,
     collect_oud_replication_server_configuration,
     collect_single_oud_metrics,
+    discover_oud_admin_host,
     oud_secure_command,
     parse_dsconfig_list,
 )
@@ -13,6 +15,27 @@ from config_store import LEGACY_DEFAULT_OUD_CHECKS, normalize_environment, norma
 
 
 class OudCollectionTests(unittest.TestCase):
+    @patch("collector.run_target")
+    def test_admin_endpoint_discovery_tries_status_and_saved_hosts(self, run_target_mock):
+        run_target_mock.return_value = {
+            "exit_code": 0,
+            "output": "__FMW_OUD_ADMIN_HOST__=ds1violet.cuny.edu\n",
+        }
+
+        host = discover_oud_admin_host(
+            {"mode": "local"},
+            {"host": "ds1violet.cuny.edu", "adminPort": 4444},
+            "/opt/oracle/instances/DS1/bin",
+            "cn=Directory Manager",
+            "secret",
+            status_host="ds1violet",
+        )
+
+        command = run_target_mock.call_args[0][1]
+        self.assertEqual("ds1violet.cuny.edu", host)
+        self.assertIn("ds1violet ds1violet.cuny.edu 127.0.0.1 localhost", command)
+        self.assertIn('list-password-policies >/dev/null 2>&1', command)
+
     def test_oud_oracle_home_strips_instance_path_below_standard_oracle_home(self):
         self.assertEqual(
             "/refresh/home/oracle/Oracle/Middleware/Oracle_Home",
@@ -99,7 +122,7 @@ proxy-we1         : proxy-ldap         : true
 
         result = collect_oud_proxy_configuration(
             {"mode": "local"},
-            {"adminPort": 4444},
+            {"adminHost": "ds1violet", "adminPort": 4444},
             "/opt/oracle/instances/PS1/bin",
             "PS1",
             "cn=Directory Manager",
@@ -110,6 +133,29 @@ proxy-we1         : proxy-ldap         : true
         self.assertEqual(len(result["proxyWorkflowElements"]), 2)
         self.assertEqual(result["proxyWorkflowElements"][0]["ldap-server-extension"], "DS1")
         self.assertEqual(result["proxyDataSources"][0]["remote-ldap-server-address"], "ds1.example.com")
+        self.assertIn("-h ds1violet -p 4444", run_target_mock.call_args_list[0][0][1])
+
+    @patch("collector.run_target")
+    def test_monitoring_and_policies_use_discovered_admin_host(self, run_target_mock):
+        run_target_mock.return_value = {
+            "exit_code": 1,
+            "output": "Connect Error Result Code: 91",
+        }
+
+        result = collect_oud_monitoring_and_policies(
+            {"mode": "local"},
+            {"adminHost": "ds1violet", "adminPort": 4444},
+            "/opt/oracle/instances/DS1/bin",
+            "DS1",
+            "cn=Directory Manager",
+            "secret",
+        )
+
+        commands = [call[0][1] for call in run_target_mock.call_args_list]
+        self.assertEqual(8, len(commands))
+        self.assertTrue(all("-h ds1violet -p 4444" in command for command in commands))
+        self.assertIn("Connect Error Result Code: 91", result["monitorError"])
+        self.assertIn("Connect Error Result Code: 91", result["passwordPolicyError"])
         self.assertNotIn("secret", str(result))
 
     @patch("collector.run_target")

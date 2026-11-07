@@ -951,6 +951,45 @@ def dsconfig_safe_properties(text, allowed):
     return properties
 
 
+def oud_admin_endpoint(settings):
+    settings = settings or {}
+    host = str(settings.get("adminHost") or settings.get("host") or "127.0.0.1").strip()
+    return host or "127.0.0.1", settings.get("adminPort") or 4444
+
+
+def discover_oud_admin_host(target, settings, bin_directory, bind_dn, bind_password, status_host=""):
+    candidates = []
+    for value in (
+        status_host,
+        (settings or {}).get("adminHost"),
+        (settings or {}).get("host"),
+        "127.0.0.1",
+        "localhost",
+    ):
+        host = str(value or "").strip()
+        if host and host not in candidates:
+            candidates.append(host)
+    if not candidates or not bind_dn or not bind_password:
+        return candidates[0] if candidates else "127.0.0.1"
+
+    admin_port = (settings or {}).get("adminPort") or 4444
+    candidate_words = " ".join(shlex.quote(host) for host in candidates)
+    body = (
+        'DSCONFIG=./dsconfig; [ -x "$DSCONFIG" ] || DSCONFIG=dsconfig; '
+        'for admin_host in {hosts}; do '
+        'if "$DSCONFIG" -h "$admin_host" -p {port} -D "$BIND_DN" -j "$pwfile" '
+        '-X -n list-password-policies >/dev/null 2>&1; then '
+        'printf "__FMW_OUD_ADMIN_HOST__=%s\\n" "$admin_host"; exit 0; fi; '
+        'done; exit 1'
+    ).format(hosts=candidate_words, port=shlex.quote(str(admin_port)))
+    result = run_target(
+        target,
+        oud_secure_command(bin_directory, bind_dn, bind_password, body),
+    )
+    match = re.search(r"^__FMW_OUD_ADMIN_HOST__=(.+)$", str(result.get("output") or ""), re.MULTILINE)
+    return match.group(1).strip() if match else candidates[0]
+
+
 def collect_oud_replication_server_configuration(target, settings, bin_directory, bind_dn, bind_password):
     empty = {
         "replicationServerConfigured": False,
@@ -962,12 +1001,12 @@ def collect_oud_replication_server_configuration(target, settings, bin_directory
         empty["replicationServerError"] = "OUD root user or password is not configured."
         return empty
 
-    admin_port = settings.get("adminPort") or 4444
+    admin_host, admin_port = oud_admin_endpoint(settings)
     command = (
         'DSCONFIG=./dsconfig; [ -x "$DSCONFIG" ] || DSCONFIG=dsconfig; '
-        '"$DSCONFIG" -h localhost -p {port} -D "$BIND_DN" -j "$pwfile" -X -n '
+        '"$DSCONFIG" -h {host} -p {port} -D "$BIND_DN" -j "$pwfile" -X -n '
         'get-synchronization-provider-prop --provider-name "Multimaster Synchronization"'
-    ).format(port=shlex.quote(str(admin_port)))
+    ).format(host=shlex.quote(admin_host), port=shlex.quote(str(admin_port)))
     result = run_target(
         target,
         oud_secure_command(bin_directory, bind_dn, bind_password, command),
@@ -998,8 +1037,8 @@ def collect_oud_replication_server_configuration(target, settings, bin_directory
         "replicationServerError": error,
         "commands": [{
             "label": "Local Replication Server Configuration",
-            "command": 'cd {0} && dsconfig ... get-synchronization-provider-prop --provider-name "Multimaster Synchronization"'.format(
-                bin_directory
+            "command": 'cd {0} && dsconfig -h {1} -p {2} ... get-synchronization-provider-prop --provider-name "Multimaster Synchronization"'.format(
+                bin_directory, admin_host, admin_port
             ),
         }],
     }
@@ -1017,11 +1056,11 @@ def collect_oud_proxy_configuration(target, settings, bin_directory, instance_na
         empty["proxyError"] = "OUD root user or password is not configured."
         return empty
 
-    admin_port = settings.get("adminPort") or 4444
+    admin_host, admin_port = oud_admin_endpoint(settings)
     base = (
         'DSCONFIG=./dsconfig; [ -x "$DSCONFIG" ] || DSCONFIG=dsconfig; '
-        '"$DSCONFIG" -h localhost -p {port} -D "$BIND_DN" -j "$pwfile" -X -n '
-    ).format(port=shlex.quote(str(admin_port)))
+        '"$DSCONFIG" -h {host} -p {port} -D "$BIND_DN" -j "$pwfile" -X -n '
+    ).format(host=shlex.quote(admin_host), port=shlex.quote(str(admin_port)))
     commands = []
 
     workflow_result = run_target(
@@ -1030,8 +1069,8 @@ def collect_oud_proxy_configuration(target, settings, bin_directory, instance_na
     )
     commands.append({
         "label": "Proxy Workflow Elements",
-        "command": 'cd {0} && dsconfig -h localhost -p {1} -D "{2}" -j <temporary password file> -X -n list-workflow-elements'.format(
-            bin_directory, admin_port, bind_dn or "cn=Directory Manager"
+        "command": 'cd {0} && dsconfig -h {1} -p {2} -D "{3}" -j <temporary password file> -X -n list-workflow-elements'.format(
+            bin_directory, admin_host, admin_port, bind_dn or "cn=Directory Manager"
         ),
     })
     extension_result = run_target(
@@ -1040,8 +1079,8 @@ def collect_oud_proxy_configuration(target, settings, bin_directory, instance_na
     )
     commands.append({
         "label": "Proxy Data Sources",
-        "command": 'cd {0} && dsconfig -h localhost -p {1} -D "{2}" -j <temporary password file> -X -n list-extensions'.format(
-            bin_directory, admin_port, bind_dn or "cn=Directory Manager"
+        "command": 'cd {0} && dsconfig -h {1} -p {2} -D "{3}" -j <temporary password file> -X -n list-extensions'.format(
+            bin_directory, admin_host, admin_port, bind_dn or "cn=Directory Manager"
         ),
     })
 
@@ -1138,7 +1177,7 @@ def collect_oud_proxy_configuration(target, settings, bin_directory, instance_na
 
 
 def collect_oud_monitoring_and_policies(target, settings, bin_directory, instance_name, bind_dn, bind_password):
-    admin_port = settings.get("adminPort") or 4444
+    admin_host, admin_port = oud_admin_endpoint(settings)
     if not bind_dn or not bind_password:
         return {
             "monitorEntries": [],
@@ -1162,9 +1201,10 @@ def collect_oud_monitoring_and_policies(target, settings, bin_directory, instanc
     for label, base_dn in monitor_specs:
         body = (
             "LDAPSEARCH=./ldapsearch; [ -x \"$LDAPSEARCH\" ] || LDAPSEARCH=ldapsearch; "
-            "\"$LDAPSEARCH\" -h localhost -p {port} -D \"$BIND_DN\" -j \"$pwfile\" "
+            "\"$LDAPSEARCH\" -h {host} -p {port} -D \"$BIND_DN\" -j \"$pwfile\" "
             "--useSSL --trustAll -s base -b {base_dn} '(objectclass=*)'"
         ).format(
+            host=shlex.quote(admin_host),
             port=shlex.quote(str(admin_port)),
             base_dn=shlex.quote(base_dn),
         )
@@ -1172,8 +1212,9 @@ def collect_oud_monitoring_and_policies(target, settings, bin_directory, instanc
         result = run_target(target, command)
         commands.append({
             "label": "OUD Monitoring - {0}".format(label),
-            "command": "cd {0} && ldapsearch -h localhost -p {1} -D \"{2}\" -j <temporary password file> --useSSL --trustAll -s base -b \"{3}\" \"(objectclass=*)\"".format(
+            "command": "cd {0} && ldapsearch -h {1} -p {2} -D \"{3}\" -j <temporary password file> --useSSL --trustAll -s base -b \"{4}\" \"(objectclass=*)\"".format(
                 bin_directory,
+                admin_host,
                 admin_port,
                 bind_dn or "cn=Directory Manager",
                 base_dn,
@@ -1186,15 +1227,16 @@ def collect_oud_monitoring_and_policies(target, settings, bin_directory, instanc
 
     policy_rows = []
     policy_errors = []
-    list_body = "DSCONFIG=./dsconfig; [ -x \"$DSCONFIG\" ] || DSCONFIG=dsconfig; \"$DSCONFIG\" -h localhost -p {0} -D \"$BIND_DN\" -j \"$pwfile\" -X -n list-password-policies".format(
-        shlex.quote(str(admin_port))
+    list_body = "DSCONFIG=./dsconfig; [ -x \"$DSCONFIG\" ] || DSCONFIG=dsconfig; \"$DSCONFIG\" -h {0} -p {1} -D \"$BIND_DN\" -j \"$pwfile\" -X -n list-password-policies".format(
+        shlex.quote(admin_host), shlex.quote(str(admin_port))
     )
     list_command = oud_secure_command(bin_directory, bind_dn, bind_password, list_body)
     list_result = run_target(target, list_command)
     commands.append({
         "label": "Password Policies",
-        "command": 'cd {0} && dsconfig -h localhost -p {1} -D "{2}" -j <temporary password file> -X -n list-password-policies'.format(
+        "command": 'cd {0} && dsconfig -h {1} -p {2} -D "{3}" -j <temporary password file> -X -n list-password-policies'.format(
             bin_directory,
+            admin_host,
             admin_port,
             bind_dn or "cn=Directory Manager",
         ),
@@ -1216,15 +1258,17 @@ def collect_oud_monitoring_and_policies(target, settings, bin_directory, instanc
         policy_errors.append(list_result.get("output") or "dsconfig list-password-policies failed")
 
     for policy in policy_names[:8]:
-        prop_body = "DSCONFIG=./dsconfig; [ -x \"$DSCONFIG\" ] || DSCONFIG=dsconfig; \"$DSCONFIG\" -h localhost -p {port} -D \"$BIND_DN\" -j \"$pwfile\" -X -n get-password-policy-prop --policy-name {policy}".format(
+        prop_body = "DSCONFIG=./dsconfig; [ -x \"$DSCONFIG\" ] || DSCONFIG=dsconfig; \"$DSCONFIG\" -h {host} -p {port} -D \"$BIND_DN\" -j \"$pwfile\" -X -n get-password-policy-prop --policy-name {policy}".format(
+            host=shlex.quote(admin_host),
             port=shlex.quote(str(admin_port)),
             policy=shlex.quote(policy),
         )
         prop_result = run_target(target, oud_secure_command(bin_directory, bind_dn, bind_password, prop_body))
         commands.append({
             "label": "Password Policy - {0}".format(policy),
-            "command": 'cd {0} && dsconfig -h localhost -p {1} -D "{2}" -j <temporary password file> -X -n get-password-policy-prop --policy-name "{3}"'.format(
+            "command": 'cd {0} && dsconfig -h {1} -p {2} -D "{3}" -j <temporary password file> -X -n get-password-policy-prop --policy-name "{4}"'.format(
                 bin_directory,
+                admin_host,
                 admin_port,
                 bind_dn or "cn=Directory Manager",
                 policy,
@@ -5121,6 +5165,14 @@ def collect_single_oud_metrics(target, environment, instance_profile=None):
                 break
     if inferred_admin_port:
         settings["adminPort"] = inferred_admin_port
+    settings["adminHost"] = discover_oud_admin_host(
+        target,
+        settings,
+        bin_directory,
+        bind_dn,
+        bind_password,
+        status_host=summary.get("Host Name") or "",
+    )
     replication_server_payload = collect_oud_replication_server_configuration(
         target,
         settings,
@@ -5199,6 +5251,7 @@ def collect_single_oud_metrics(target, environment, instance_profile=None):
         "serverRole": " / ".join(server_roles),
         "ldapPort": settings.get("ldapPort") or 1389,
         "adminPort": settings.get("adminPort") or 4444,
+        "adminHost": settings.get("adminHost") or "127.0.0.1",
         "binDirectory": bin_directory,
         "commands": [
             {"label": "OUD Status", "command": 'cd {0} && ./status -D "{1}" -j <temporary password file>'.format(bin_directory, bind_dn or "cn=Directory Manager")},
