@@ -1176,6 +1176,53 @@ def collect_oud_proxy_configuration(target, settings, bin_directory, instance_na
     }
 
 
+def oud_replication_endpoint(settings, proxy_payload=None):
+    settings = settings or {}
+    explicit_host = str(settings.get("replicationHost") or "").strip()
+    if explicit_host:
+        return explicit_host, "configured replication host"
+
+    for data_source in (proxy_payload or {}).get("proxyDataSources") or []:
+        remote_host = str((data_source or {}).get("remote-ldap-server-address") or "").strip()
+        if remote_host:
+            return remote_host, "proxied directory server"
+
+    admin_host, _ = oud_admin_endpoint(settings)
+    return admin_host, "local OUD administration endpoint"
+
+
+def collect_oud_replication_status(target, settings, bin_directory, bind_dn, bind_password, proxy_payload=None):
+    replication_host, replication_source = oud_replication_endpoint(settings, proxy_payload)
+    admin_port = (settings or {}).get("adminPort") or 4444
+    body = (
+        './dsreplication status -h {host} -p {port} -D "$BIND_DN" '
+        '-j "$pwfile" -X --Advanced -n'
+    ).format(
+        host=shlex.quote(replication_host),
+        port=shlex.quote(str(admin_port)),
+    )
+    result = run_target(
+        target,
+        oud_secure_command(bin_directory, bind_dn, bind_password, body),
+    )
+    return {
+        "output": str(result.get("output") or ""),
+        "exitCode": result.get("exit_code"),
+        "host": replication_host,
+        "port": admin_port,
+        "source": replication_source,
+        "command": (
+            'cd {0} && ./dsreplication status -h {1} -p {2} -D "{3}" '
+            '-j <temporary password file> -X --Advanced -n'
+        ).format(
+            bin_directory,
+            replication_host,
+            admin_port,
+            bind_dn or "cn=Directory Manager",
+        ),
+    }
+
+
 def collect_oud_monitoring_and_policies(target, settings, bin_directory, instance_name, bind_dn, bind_password):
     admin_host, admin_port = oud_admin_endpoint(settings)
     if not bind_dn or not bind_password:
@@ -5113,12 +5160,6 @@ def collect_single_oud_metrics(target, environment, instance_profile=None):
         bind_password,
         './status -D "$BIND_DN" -j "$pwfile"',
     )
-    replication_command = oud_secure_command(
-        bin_directory,
-        bind_dn,
-        bind_password,
-        './dsreplication status -D "$BIND_DN" -j "$pwfile" -X --Advanced -n',
-    )
     build_command = "cd {0} && {1} ./start-ds -F".format(shlex.quote(bin_directory), oud_cli_environment())
     system_command = "cd {0} && {1} ./start-ds -s".format(shlex.quote(bin_directory), oud_cli_environment())
 
@@ -5130,10 +5171,6 @@ def collect_single_oud_metrics(target, environment, instance_profile=None):
         status_output = status_result.get("output")
         if status_result.get("exit_code") != 0:
             errors.append("status command failed: {0}".format(status_output or "unknown error"))
-        replication_result = run_target(target, replication_command)
-        replication_output = replication_result.get("output")
-        if replication_result.get("exit_code") != 0:
-            errors.append("dsreplication status failed: {0}".format(replication_output or "unknown error"))
     else:
         errors.append("OUD root user or password is not configured.")
 
@@ -5145,7 +5182,6 @@ def collect_single_oud_metrics(target, environment, instance_profile=None):
     if system_result.get("exit_code") != 0:
         errors.append("start-ds -s failed: {0}".format(system_result.get("output") or "unknown error"))
     parsed = parse_oud_status(status_output)
-    replication_sections = parse_oud_replication(replication_output)
     build_info = parse_key_value_banner_output(build_result.get("output"))
     system_info = parse_key_value_banner_output(system_result.get("output"))
     summary = parsed.get("summary") or {}
@@ -5188,6 +5224,27 @@ def collect_single_oud_metrics(target, environment, instance_profile=None):
         bind_dn,
         bind_password,
     )
+    replication_payload = {
+        "output": "",
+        "exitCode": None,
+        "host": settings.get("adminHost") or "127.0.0.1",
+        "port": settings.get("adminPort") or 4444,
+        "source": "local OUD administration endpoint",
+        "command": "",
+    }
+    if bind_dn and bind_password:
+        replication_payload = collect_oud_replication_status(
+            target,
+            settings,
+            bin_directory,
+            bind_dn,
+            bind_password,
+            proxy_payload=proxy_payload,
+        )
+        replication_output = replication_payload.get("output") or ""
+        if replication_payload.get("exitCode") != 0:
+            errors.append("dsreplication status failed: {0}".format(replication_output or "unknown error"))
+    replication_sections = parse_oud_replication(replication_output)
     monitor_payload = collect_oud_monitoring_and_policies(
         target,
         settings,
@@ -5255,7 +5312,7 @@ def collect_single_oud_metrics(target, environment, instance_profile=None):
         "binDirectory": bin_directory,
         "commands": [
             {"label": "OUD Status", "command": 'cd {0} && ./status -D "{1}" -j <temporary password file>'.format(bin_directory, bind_dn or "cn=Directory Manager")},
-            {"label": "Replication Status", "command": 'cd {0} && ./dsreplication status -D "{1}" -j <temporary password file> -X --Advanced -n'.format(bin_directory, bind_dn or "cn=Directory Manager")},
+            {"label": "Replication Status", "command": replication_payload.get("command") or "Replication status was not collected."},
             {"label": "Build Version", "command": "cd {0} && ./start-ds -F".format(bin_directory)},
             {"label": "Runtime System", "command": "cd {0} && ./start-ds -s".format(bin_directory)},
         ] + (replication_server_payload.get("commands") or []) + (proxy_payload.get("commands") or []) + (monitor_payload.get("commands") or []),
@@ -5278,6 +5335,9 @@ def collect_single_oud_metrics(target, environment, instance_profile=None):
         "backends": backends,
         "namingContexts": [item.get("baseDn") for item in backends if item.get("baseDn")],
         "replicationSections": replication_sections,
+        "replicationHost": replication_payload.get("host"),
+        "replicationPort": replication_payload.get("port"),
+        "replicationSource": replication_payload.get("source"),
         "replicationNodes": replication_nodes,
         "replicationEnabledCount": len(replication_enabled_sections),
         "replicationDisabledCount": len(replication_disabled_sections),
@@ -8851,7 +8911,7 @@ def extract_oam_curated_config(flat_paths):
 def collect_oam_config_metrics(target, oracle_home, domain_home, progress=None):
     oracle_home = str(oracle_home or "").strip().rstrip("/")
     domain_home = str(domain_home or "").strip().rstrip("/")
-    if not domain_home:
+    if not domain_home and not oracle_home:
         return {
             "configFile": "",
             "groups": {},
@@ -8866,17 +8926,36 @@ def collect_oam_config_metrics(target, oracle_home, domain_home, progress=None):
         "is_oam_config(){ grep -Eqi 'NGAMServer|WebGate|SessionConfigurations|LDAPModules|OAMServer' \"$1\" 2>/dev/null; }\n"
         "for candidate in \"$DH/config/fmwconfig/oam-config.xml\" \"$DH/config/fmwconfig/oam-config.xml.bak\"; do\n"
         "  if [ -r \"$candidate\" ] && is_oam_config \"$candidate\"; then\n"
+        "    printf 'IAM_MONITORING_OAM_CONFIG_SOURCE=active-domain\\n'\n"
         "    printf 'IAM_MONITORING_OAM_CONFIG=%s\\n' \"$candidate\"\n"
         "    cat \"$candidate\"\n"
         "    exit 0\n"
         "  fi\n"
         "done\n"
-        "found=$(find \"$DH\" \"$(dirname \"$DH\")\" \"$(dirname \"$(dirname \"$DH\")\")\" \"$OH\" -maxdepth 7 -name oam-config.xml -type f -readable -print 2>/dev/null | while IFS= read -r candidate; do if is_oam_config \"$candidate\"; then printf '%s\\n' \"$candidate\"; break; fi; done)\n"
+        "candidate_file=$(mktemp \"${TMPDIR:-/tmp}/fmw-oam-candidates.XXXXXX\") || exit 1\n"
+        "trap 'rm -f \"$candidate_file\"' EXIT HUP INT TERM\n"
+        "for root in \"$DH\" \"$(dirname \"$DH\")\" \"$(dirname \"$(dirname \"$DH\")\")\" \"$OH\" \"$(dirname \"$OH\")/user_projects/domains\"; do\n"
+        "  [ -n \"$root\" ] && [ \"$root\" != \".\" ] || continue\n"
+        "  [ -d \"$root\" ] || continue\n"
+        "  find \"$root\" -maxdepth 8 -name oam-config.xml -type f -readable -printf '%T@|%p\\n' 2>/dev/null >> \"$candidate_file\"\n"
+        "done\n"
+        "found=$(while IFS='|' read -r stamp candidate; do\n"
+        "  case \"$candidate\" in */.patch_storage/*|*/workingDir/patches/*) continue;; esac\n"
+        "  is_oam_config \"$candidate\" || continue\n"
+        "  case \"$candidate\" in\n"
+        "    */user_projects/domains/*/config/fmwconfig/oam-config.xml) rank=0;;\n"
+        "    */config/fmwconfig/oam-config.xml) rank=1;;\n"
+        "    */config/fmwconfig/dbconfig/oam-config.xml) rank=2;;\n"
+        "    */idm/oam/server/config/*) rank=4;;\n"
+        "    *) rank=3;;\n"
+        "  esac\n"
+        "  printf '%s|%s|%s\\n' \"$rank\" \"$stamp\" \"$candidate\"\n"
+        "done < \"$candidate_file\" | sort -t'|' -k1,1n -k2,2nr | head -n 1 | cut -d'|' -f3-)\n"
         "if [ -z \"$found\" ]; then\n"
         "  for candidate in \"$DH/config/fmwconfig/oam-config.xml\" \"$DH/config/fmwconfig/oam-config.xml.bak\"; do [ -r \"$candidate\" ] && { found=\"$candidate\"; break; }; done\n"
         "fi\n"
-        "if [ -z \"$found\" ]; then found=$(find \"$DH\" \"$OH\" -maxdepth 6 -name oam-config.xml -type f -readable -print -quit 2>/dev/null); fi\n"
         "if [ -n \"$found\" ]; then\n"
+        "  printf 'IAM_MONITORING_OAM_CONFIG_SOURCE=ranked-fallback\\n'\n"
         "  printf 'IAM_MONITORING_OAM_CONFIG=%s\\n' \"$found\"\n"
         "  cat \"$found\"\n"
         "  exit 0\n"
@@ -8888,6 +8967,7 @@ def collect_oam_config_metrics(target, oracle_home, domain_home, progress=None):
         progress("Collecting OAM webgate, LDAP store, session, policy, and certificate-validation settings from oam-config.xml.")
     result = run_target(target, command, timeout=60)
     output = str(result.get("output") or "")
+    source_match = re.search(r"^IAM_MONITORING_OAM_CONFIG_SOURCE=(.+)$", output, re.MULTILINE)
     marker_match = re.search(r"^IAM_MONITORING_OAM_CONFIG=(.+)$", output, re.MULTILINE)
     if not marker_match:
         return {
@@ -8900,6 +8980,7 @@ def collect_oam_config_metrics(target, oracle_home, domain_home, progress=None):
     config_file = marker_match.group(1).strip()
     xml_text = output[marker_match.end():].strip()
     parsed = parse_oam_config_xml(xml_text, config_file=config_file)
+    parsed["configSource"] = source_match.group(1).strip() if source_match else "unknown"
     flat_paths = parse_oam_setting_paths(xml_text, config_file=config_file)
     curated = extract_oam_curated_config(flat_paths)
     parsed["flatPathsError"] = flat_paths.get("error") or ""

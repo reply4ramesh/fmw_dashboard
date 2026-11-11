@@ -5,11 +5,13 @@ from collector import (
     collect_opatch_inventory,
     collect_oud_monitoring_and_policies,
     collect_oud_proxy_configuration,
+    collect_oud_replication_status,
     collect_oud_replication_server_configuration,
     collect_single_oud_metrics,
     discover_oud_admin_host,
     oud_secure_command,
     parse_dsconfig_list,
+    parse_oud_replication,
 )
 from config_store import LEGACY_DEFAULT_OUD_CHECKS, normalize_environment, normalize_oud_oracle_home_path
 
@@ -134,6 +136,48 @@ proxy-we1         : proxy-ldap         : true
         self.assertEqual(result["proxyWorkflowElements"][0]["ldap-server-extension"], "DS1")
         self.assertEqual(result["proxyDataSources"][0]["remote-ldap-server-address"], "ds1.example.com")
         self.assertIn("-h ds1violet -p 4444", run_target_mock.call_args_list[0][0][1])
+
+    @patch("collector.run_target")
+    def test_proxy_replication_uses_remote_directory_admin_host(self, run_target_mock):
+        run_target_mock.return_value = {
+            "exit_code": 0,
+            "output": "dc=example,dc=com - Replication Enabled\n",
+        }
+
+        result = collect_oud_replication_status(
+            {"mode": "local"},
+            {"adminHost": "proxy1.example.com", "adminPort": 4444},
+            "/opt/oracle/instances/PS1/bin",
+            "cn=Directory Manager",
+            "secret",
+            proxy_payload={
+                "proxyDataSources": [{
+                    "remote-ldap-server-address": "directory1.example.com",
+                    "remote-ldap-server-port": "1636",
+                }],
+            },
+        )
+
+        command = run_target_mock.call_args[0][1]
+        self.assertIn("./dsreplication status -h directory1.example.com -p 4444", command)
+        self.assertEqual("directory1.example.com", result["host"])
+        self.assertEqual("proxied directory server", result["source"])
+        self.assertNotIn("secret", str(result))
+
+    def test_replication_parser_accepts_advanced_status_table(self):
+        output = """
+dc=example,dc=com - Replication Enabled
+Server                 : Entries : M.C. : A.O.M.C. : Port : Status : Conflicts
+-----------------------:---------:------:----------:------:--------:----------
+directory1.example.com : 2743545 : 0    : 0 second : 8989 : Normal : 0
+directory2.example.com : 2743545 : 0    : 0 second : 8989 : Normal : 0
+"""
+        sections = parse_oud_replication(output)
+
+        self.assertEqual(1, len(sections))
+        self.assertTrue(sections[0]["enabled"])
+        self.assertEqual(2, len(sections[0]["servers"]))
+        self.assertEqual("Normal", sections[0]["servers"][0]["status"])
 
     @patch("collector.run_target")
     def test_monitoring_and_policies_use_discovered_admin_host(self, run_target_mock):

@@ -1,3 +1,6 @@
+import os
+import pathlib
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -50,7 +53,8 @@ class OamCollectionTests(unittest.TestCase):
     def test_config_discovery_returns_selected_file_and_curated_rows(self, run_target_mock):
         run_target_mock.return_value = {
             "exit_code": 0,
-            "output": """IAM_MONITORING_OAM_CONFIG=/opt/oracle/user_projects/domains/oam/config/fmwconfig/oam-config.xml
+            "output": """IAM_MONITORING_OAM_CONFIG_SOURCE=active-domain
+IAM_MONITORING_OAM_CONFIG=/opt/oracle/user_projects/domains/oam/config/fmwconfig/oam-config.xml
             <NGAMConfiguration><DeployedComponent><Agent><WebGate><Instance><WG1>
             <preferredHost>violet.example.com</preferredHost>
             </WG1></Instance></WebGate></Agent></DeployedComponent></NGAMConfiguration>""",
@@ -63,10 +67,43 @@ class OamCollectionTests(unittest.TestCase):
         )
 
         self.assertEqual(result["configFile"], "/opt/oracle/user_projects/domains/oam/config/fmwconfig/oam-config.xml")
+        self.assertEqual(result["configSource"], "active-domain")
         self.assertEqual(result["curated"]["webgates"][0]["name"], "WG1")
-        command = run_target_mock.call_args.args[1]
+        command = run_target_mock.call_args[0][1]
         self.assertIn("is_oam_config", command)
         self.assertIn("SessionConfigurations", command)
+        self.assertIn('$(dirname "$OH")/user_projects/domains', command)
+        self.assertIn("*/.patch_storage/*|*/workingDir/patches/*", command)
+        self.assertIn("*/user_projects/domains/*/config/fmwconfig/oam-config.xml", command)
+
+    @unittest.skipUnless(os.name == "posix", "OAM discovery shell integration requires GNU find")
+    def test_ranked_fallback_prefers_active_domain_over_static_product_template(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = pathlib.Path(temp_dir)
+            active = root / "user_projects/domains/oam_domain/config/fmwconfig/oam-config.xml"
+            active.parent.mkdir(parents=True)
+            active.write_text(
+                "<NGAMConfiguration><DeployedComponent><Agent><WebGate><Instance>"
+                "<ActiveWebGate><preferredHost>active.example.com</preferredHost></ActiveWebGate>"
+                "</Instance></WebGate></Agent></DeployedComponent></NGAMConfiguration>"
+            )
+            static = root / "Oracle_IAM14C/idm/oam/server/config/dbconfig/oam-config.xml"
+            static.parent.mkdir(parents=True)
+            static.write_text(
+                "<NGAMConfiguration><DeployedComponent><Agent><WebGate><Instance>"
+                "<StaleWebGate><preferredHost>stale.example.com</preferredHost></StaleWebGate>"
+                "</Instance></WebGate></Agent></DeployedComponent></NGAMConfiguration>"
+            )
+
+            result = collector.collect_oam_config_metrics(
+                {"mode": "local"},
+                str(root / "Oracle_IAM14C"),
+                str(root / "wrong_domain"),
+            )
+
+            self.assertEqual(str(active), result["configFile"])
+            self.assertEqual("ranked-fallback", result["configSource"])
+            self.assertEqual("ActiveWebGate", result["curated"]["webgates"][0]["name"])
 
     @patch("collector.run_target")
     def test_oauth_retries_self_signed_certificate_read_only_call(self, run_target_mock):
