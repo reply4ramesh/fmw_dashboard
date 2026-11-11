@@ -41,7 +41,7 @@ DEFAULT_NOTIFICATION_SETTINGS = {
         "hoggingThreadsCritical": 10,
     },
     "repeatMinutes": 360,
-    "environmentScope": "all",
+    "environmentScope": "selected",
     "environmentIds": [],
 }
 
@@ -85,7 +85,7 @@ def _connect(db_path):
     _ensure_column(conn, "notification_settings", "event_types", "TEXT NOT NULL DEFAULT '{}'")
     _ensure_column(conn, "notification_settings", "thresholds", "TEXT NOT NULL DEFAULT '{}'")
     _ensure_column(conn, "notification_settings", "repeat_minutes", "INTEGER NOT NULL DEFAULT 360")
-    _ensure_column(conn, "notification_settings", "environment_scope", "TEXT NOT NULL DEFAULT 'all'")
+    _ensure_column(conn, "notification_settings", "environment_scope", "TEXT NOT NULL DEFAULT 'selected'")
     _ensure_column(conn, "notification_settings", "environment_ids", "TEXT NOT NULL DEFAULT '[]'")
     conn.execute(
         """

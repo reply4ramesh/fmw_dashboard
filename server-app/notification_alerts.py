@@ -298,8 +298,6 @@ def _recipients_for_severity(db_path, severity):
 
 
 def _environment_notifications_enabled(settings, environment):
-    if (settings or {}).get("environmentScope") != "selected":
-        return True
     environment_id = str((environment or {}).get("id") or "").strip()
     selected_ids = {str(item or "").strip() for item in (settings or {}).get("environmentIds", [])}
     return bool(environment_id) and environment_id in selected_ids

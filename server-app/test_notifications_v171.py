@@ -61,7 +61,7 @@ class NotificationPolicyStoreTests(unittest.TestCase):
         self.assertEqual("secret", settings["smtpPassword"])
         self.assertEqual(DEFAULT_NOTIFICATION_SETTINGS["eventTypes"], settings["eventTypes"])
         self.assertEqual(360, settings["repeatMinutes"])
-        self.assertEqual("all", settings["environmentScope"])
+        self.assertEqual("selected", settings["environmentScope"])
         self.assertEqual([], settings["environmentIds"])
 
     def test_policy_round_trip_normalizes_thresholds_and_preserves_smtp(self):
@@ -116,9 +116,9 @@ class NotificationPolicyStoreTests(unittest.TestCase):
         self.assertFalse(saved["hasPassword"])
         self.assertEqual("", secret["smtpPassword"])
 
-    def test_environment_scope_round_trip_defaults_to_all_and_normalizes_ids(self):
+    def test_environment_scope_round_trip_defaults_to_selected_and_normalizes_ids(self):
         defaults = get_notification_settings(self.db_path)
-        self.assertEqual("all", defaults["environmentScope"])
+        self.assertEqual("selected", defaults["environmentScope"])
         self.assertEqual([], defaults["environmentIds"])
         saved = save_notification_settings(
             self.db_path,
@@ -156,6 +156,8 @@ class NotificationAlertTests(unittest.TestCase):
                 "enabled": True,
                 "eventTypes": event_types,
                 "repeatMinutes": 60,
+                "environmentScope": "selected",
+                "environmentIds": [self.environment["id"]],
             },
         )
         save_notification_recipient(
@@ -259,6 +261,8 @@ class NotificationAlertTests(unittest.TestCase):
                 "securityMode": "none",
                 "enabled": True,
                 "eventTypes": event_types,
+                "environmentScope": "selected",
+                "environmentIds": [self.environment["id"]],
             },
         )
         dashboard = {
@@ -300,6 +304,24 @@ class NotificationAlertTests(unittest.TestCase):
         alert = send_environment_alerts(self.db_path, self.environment, dashboard)
         success = send_collection_success_notification(self.db_path, self.environment, dashboard)
         failure = send_collection_failure_notification(self.db_path, self.environment, "SSH timed out")
+        self.assertEqual("environment_disabled", alert["reason"])
+        self.assertEqual("environment_disabled", success["reason"])
+        self.assertEqual("environment_disabled", failure["reason"])
+        self.assertEqual(0, send_mail.call_count)
+
+    @mock.patch("notification_alerts._send_mail")
+    def test_empty_profile_selection_blocks_every_notification_type_even_for_legacy_all_scope(self, send_mail):
+        self._configure_delivery(success=True)
+        save_notification_settings(
+            self.db_path,
+            {"environmentScope": "all", "environmentIds": []},
+        )
+        dashboard = {"status": "critical", "server": {"reachable": True, "memory": {"usedPercent": 99}}}
+
+        alert = send_environment_alerts(self.db_path, self.environment, dashboard)
+        success = send_collection_success_notification(self.db_path, self.environment, dashboard)
+        failure = send_collection_failure_notification(self.db_path, self.environment, "SSH timed out")
+
         self.assertEqual("environment_disabled", alert["reason"])
         self.assertEqual("environment_disabled", success["reason"])
         self.assertEqual("environment_disabled", failure["reason"])
