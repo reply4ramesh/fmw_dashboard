@@ -39,6 +39,15 @@ New-Item -ItemType Directory -Force -Path $outputPath | Out-Null
 
 Get-ChildItem -LiteralPath $sourcePath -Force | Copy-Item -Destination $stagingPath -Recurse -Force
 
+# Offline packages may be built on Windows but are executed on Linux. Normalize
+# shell entry points in staging without changing the developer worktree.
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+Get-ChildItem -LiteralPath $stagingPath -Recurse -File -Filter "*.sh" | ForEach-Object {
+    $content = [System.IO.File]::ReadAllText($_.FullName)
+    $normalized = $content.Replace("`r`n", "`n").Replace("`r", "`n")
+    [System.IO.File]::WriteAllText($_.FullName, $normalized, $utf8NoBom)
+}
+
 $excludedDirectories = @(
     (Join-Path $stagingPath "venv"),
     (Join-Path $stagingPath "state")
