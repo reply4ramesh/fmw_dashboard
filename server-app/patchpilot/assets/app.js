@@ -242,11 +242,12 @@ function detectedReadmePatchMethod(text = state.readmeText) {
   return "";
 }
 
+function selectedPatchMethod() {
+  return isSpbPatchTypeLabel(state.form.patchType) ? "spbat" : "opatch";
+}
+
 function isStackPatchBundle() {
-  const readmeMethod = detectedReadmePatchMethod();
-  if (readmeMethod === "spbat") return true;
-  if (readmeMethod === "opatch" && !pathIndicatesSpbat(state.form.patchPath)) return false;
-  return isSpbPatchTypeLabel(state.form.patchType) || pathIndicatesSpbat(state.form.patchPath);
+  return selectedPatchMethod() === "spbat";
 }
 
 function isBatchNapply() {
@@ -699,7 +700,8 @@ function oigPostinstallSteps(home = selectedHome()) {
 }
 
 function analyzeReadme(text) {
-  const detectedMethod = detectedReadmePatchMethod(text) || (isStackPatchBundle() ? "spbat" : "opatch");
+  const readmeDetectedMethod = detectedReadmePatchMethod(text);
+  const detectedMethod = selectedPatchMethod();
   const opatchMatch =
     text.match(/minimum\s+opatch\s+version\s*:?\s*([0-9]+(?:\.[0-9]+)+)/i) ||
     text.match(/opatch\s+(?:version\s+)?(?:must\s+be|should\s+be|requires|required|required version|min(?:imum)?)\s*:?\s*([0-9]+(?:\.[0-9]+)+)/i) ||
@@ -726,6 +728,7 @@ function analyzeReadme(text) {
 
   return {
     patchMethod: detectedMethod,
+    readmeDetectedMethod,
     detectedPatchFamily: detectedMethod === "spbat" ? (/\bcspu\b|critical\s+stack\s+patch\s+update/i.test(text) ? "CSPU / SPBAT" : "SPBAT / Stack Patch Bundle") : "OPatch",
     minimumOpatch: opatchMatch ? opatchMatch[1] : detectedMethod === "spbat" ? "13.9.4.2.17" : "13.9.4.2.15",
     backupTargets: backupTargets.length ? backupTargets : ["ORACLE_HOME", "DOMAIN_HOME"],
@@ -2138,7 +2141,7 @@ function renderAnalysis(analysis) {
       ];
   return `
     <div class="analysis-list readme-summary-list">
-      <div><span>Detected Method</span><strong>${escapeHtml(analysis.detectedPatchFamily || (isStackPatchBundle() ? "SPBAT / Stack Patch Bundle" : "OPatch"))}</strong></div>
+      <div><span>Workflow Method</span><strong>${escapeHtml(analysis.detectedPatchFamily || (isStackPatchBundle() ? "SPBAT / Stack Patch Bundle" : "OPatch"))}</strong></div>
       ${spb ? `<div><span>SPBAT Type</span><strong>${escapeHtml(spbInstallTypeLabel())}</strong></div>` : ""}
       <div><span>Minimum OPatch</span><strong>${escapeHtml(analysis.minimumOpatch)}</strong></div>
       <div><span>Backup Scope</span><strong>${escapeHtml(analysis.backupTargets.join(", "))}</strong></div>
@@ -5008,16 +5011,9 @@ async function analyzeReadmeAction() {
     state.readmePath = result.readme.readmePath || "";
     const selectedPatchType = state.form.patchType;
     const readmeMethod = detectedReadmePatchMethod(state.readmeText);
-    if (readmeMethod === "spbat" && !isSpbPatchTypeLabel(state.form.patchType)) {
-      state.form.patchType = /\bcspu\b|critical\s+stack\s+patch\s+update/i.test(state.readmeText) ? "CSPU" : "Stack Patch Bundle";
-      resetSpbPhaseState();
-      resetPatchApplyState();
-      log(`README indicates ${state.form.patchType} / SPBAT. PatchPilot switched from ${selectedPatchType} to the SPBAT workflow.`, "warn");
-    } else if (readmeMethod === "opatch" && isSpbPatchTypeLabel(state.form.patchType) && !pathIndicatesSpbat(state.form.patchPath)) {
-      state.form.patchType = "One-off";
-      resetSpbPhaseState();
-      resetPatchApplyState();
-      log(`README indicates a standard OPatch flow. PatchPilot switched from ${selectedPatchType} to the OPatch workflow.`, "warn");
+    if (readmeMethod && readmeMethod !== selectedPatchMethod()) {
+      const selectedMethodLabel = selectedPatchMethod() === "spbat" ? "SPBAT" : "OPatch";
+      log(`README contains ${readmeMethod === "spbat" ? "SPBAT" : "OPatch"} references, but Patch Type ${selectedPatchType} keeps the ${selectedMethodLabel} workflow selected in Connect.`, "warn");
     }
     state.readmeAnalysis = analyzeReadme(state.readmeText);
     resetDatabaseBackupState();

@@ -97,6 +97,19 @@ class PatchPilotV166Tests(unittest.TestCase):
         self.assertIn("@media (max-width: 1180px)", css)
         self.assertIn("grid-template-columns: 1fr;", css)
 
+    def test_explicit_patch_type_remains_authoritative_after_readme_analysis(self):
+        javascript = (APP_ROOT / "patchpilot" / "assets" / "app.js").read_text(encoding="utf-8")
+        stack_method = javascript.split("function isStackPatchBundle()", 1)[1].split("function isBatchNapply()", 1)[0]
+        readme_action = javascript.split("async function analyzeReadmeAction()", 1)[1].split("async function", 1)[0]
+
+        self.assertIn('return selectedPatchMethod() === "spbat";', stack_method)
+        self.assertNotIn("detectedReadmePatchMethod", stack_method)
+        self.assertIn("const detectedMethod = selectedPatchMethod();", javascript)
+        self.assertIn("Workflow Method", javascript)
+        self.assertNotIn("PatchPilot switched from", readme_action)
+        self.assertNotIn("state.form.patchType =", readme_action)
+        self.assertIn("keeps the ${selectedMethodLabel} workflow selected in Connect", readme_action)
+
 
 if __name__ == "__main__":
     unittest.main()
