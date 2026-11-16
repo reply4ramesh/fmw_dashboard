@@ -110,6 +110,18 @@ class PatchPilotV166Tests(unittest.TestCase):
         self.assertNotIn("state.form.patchType =", readme_action)
         self.assertIn("keeps the ${selectedMethodLabel} workflow selected in Connect", readme_action)
 
+    def test_one_off_readme_database_actions_create_a_preinstall_gate(self):
+        javascript = (APP_ROOT / "patchpilot" / "assets" / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn('{ id: "preinstall", label: "Pre-Install"', javascript)
+        self.assertIn("const installationSection = extractReadmeSection", javascript)
+        self.assertIn("const preinstallSteps = beforeApplySteps.filter(installationNeedsManualAction);", javascript)
+        self.assertIn("sqlplus|sqldeveloper|sql\\s+client|\\.sql\\b|schema\\s+user", javascript)
+        self.assertIn("Database credentials stay outside PatchPilot", javascript)
+        self.assertIn("state.readmeAnalysis.preinstallRequiresManual && !state.preinstallDone", javascript)
+        self.assertIn("preinstall: confirmPreinstall", javascript)
+        self.assertIn("PatchPilot does not request, save, or use the OIG schema password", javascript)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -10,6 +10,7 @@ const standardSteps = [
   { id: "connect", label: "Connect", title: "Connect to the customer server", hint: "Capture SSH details and the patch location." },
   { id: "discover", label: "Discover", title: "Discover Oracle homes", hint: "Find Oracle homes, domain homes, instance homes, OPatch, BSU, and running services." },
   { id: "readme", label: "README", title: "Read patch README", hint: "Extract prerequisites, backup scope, OPatch minimums, postinstall, and startup notes." },
+  { id: "preinstall", label: "Pre-Install", title: "Complete manual pre-install actions", hint: "Complete README database scripts or other credential-dependent actions before stopping services and applying the patch." },
   { id: "shutdown", label: "Shutdown", title: "Confirm shutdown", hint: "Confirm graceful shutdown, then verify no target-home processes remain." },
   { id: "backup", label: "Backup", title: "Take required backups", hint: "Back up ORACLE_HOME, DOMAIN_HOME, and OUD INSTANCE_HOME when required." },
   { id: "opatch", label: "OPatch", title: "Validate OPatch", hint: "Compare current OPatch with README minimum and upgrade when needed." },
@@ -54,6 +55,9 @@ const state = {
   readmeText: "",
   readmePath: "",
   readmeAnalysis: null,
+  preinstallConfirmed: false,
+  preinstallDone: false,
+  preinstallNote: "",
   servicesUpConfirmed: false,
   servicesUpVerified: false,
   servicesUpManualAccepted: false,
@@ -271,7 +275,9 @@ function batchNapplyCommand(home = selectedHome(), debugArgs = "") {
 }
 
 function workflowSteps() {
-  return isStackPatchBundle() ? spbSteps : standardSteps;
+  if (isStackPatchBundle()) return spbSteps;
+  const requiresPreinstall = Boolean(state.readmeAnalysis && state.readmeAnalysis.preinstallRequiresManual);
+  return requiresPreinstall ? standardSteps : standardSteps.filter((step) => step.id !== "preinstall");
 }
 
 function currentStep() {
@@ -686,6 +692,10 @@ function postinstallNeedsManualAction(step) {
   return /sqlplus|<passwd>|password|schema|ods|tns_admin|database|db\b|wlst|patch_oim_wls|manual|perform\s+the\s+steps/i.test(step);
 }
 
+function installationNeedsManualAction(step) {
+  return /sqlplus|sqldeveloper|sql\s+client|\.sql\b|schema\s+user|<passwd>|password|credential|database|db\b|wlst|manual|perform\s+the\s+steps/i.test(step);
+}
+
 function isOigOrOimHome(home = selectedHome()) {
   const text = `${home.product || ""} ${home.label || ""} ${home.oracleHome || ""} ${state.form.spbInstallType || ""}`.toLowerCase();
   return /\boig\b|\boim\b|identity\s+governance|oracle\s+identity\s+manager/.test(text);
@@ -713,6 +723,13 @@ function analyzeReadme(text) {
   if (/INSTANCE_HOME|OUD.*instance|instance.*OUD/i.test(text)) backupTargets.push("INSTANCE_HOME");
 
   const stopSteps = extractLineMatches(text, [/stop/i, /shut\s*down/i, /shutdown/i]);
+  const installationHeadingPattern = /^\s*(?:(?:Section\s+)?\d+(?:\.\d+)*\.?\s+)?Installation\s+Instructions/i;
+  const installationSection = extractReadmeSection(text, [installationHeadingPattern]);
+  const installationSteps = splitInstructionBlocks(installationSection, installationHeadingPattern);
+  const installationManualSteps = installationSteps.map(installationNeedsManualAction);
+  const opatchApplyIndex = installationSteps.findIndex((step) => /\bopatch\s+(?:apply|napply)\b/i.test(step));
+  const beforeApplySteps = opatchApplyIndex >= 0 ? installationSteps.slice(0, opatchApplyIndex) : installationSteps;
+  const preinstallSteps = beforeApplySteps.filter(installationNeedsManualAction);
   const postinstallHeadingPattern = /^\s*(?:(?:Section\s+)?\d+(?:\.\d+)*\.?\s+)?Post\s*[- ]?\s*Installation\s+Instructions/i;
   const postinstallSection = extractReadmeSection(text, [postinstallHeadingPattern]);
   const postinstallSteps = splitInstructionBlocks(postinstallSection, postinstallHeadingPattern);
@@ -732,6 +749,11 @@ function analyzeReadme(text) {
     detectedPatchFamily: detectedMethod === "spbat" ? (/\bcspu\b|critical\s+stack\s+patch\s+update/i.test(text) ? "CSPU / SPBAT" : "SPBAT / Stack Patch Bundle") : "OPatch",
     minimumOpatch: opatchMatch ? opatchMatch[1] : detectedMethod === "spbat" ? "13.9.4.2.17" : "13.9.4.2.15",
     backupTargets: backupTargets.length ? backupTargets : ["ORACLE_HOME", "DOMAIN_HOME"],
+    installationSection,
+    installationSteps,
+    installationManualSteps,
+    preinstallSteps,
+    preinstallRequiresManual: preinstallSteps.length > 0,
     stopSteps: stopSteps.length ? stopSteps : ["Stop all WebLogic servers and Node Manager before applying this patch."],
     postinstallSection,
     postinstallSteps: effectivePostinstallSteps,
@@ -949,6 +971,14 @@ function resetPostinstallState() {
   state.postinstallDone = false;
   state.completed.delete("postinstall");
   resetSpbCleanupState();
+}
+
+function resetPreinstallState() {
+  state.preinstallConfirmed = false;
+  state.preinstallDone = false;
+  state.preinstallNote = "";
+  state.completed.delete("preinstall");
+  state.failed.delete("preinstall");
 }
 
 function resetSpbCleanupState(options = {}) {
@@ -1802,6 +1832,7 @@ function canContinue() {
   if (id === "connect") return state.connected;
   if (id === "discover") return state.discovered && discoveredHomes.length > 0;
   if (id === "readme") return Boolean(state.readmeAnalysis);
+  if (id === "preinstall") return state.preinstallDone;
   if (id === "spbBackupShutdown") return shutdownGateSatisfied("spbBackupShutdown");
   if (id === "spbUp") return state.servicesUpVerified || state.servicesUpManualAccepted || state.spbFreshInstallNoDomain;
   if (id === "spbPrepare") return state.spbPrepared;
@@ -1823,6 +1854,7 @@ function secondaryActionLabel(stepId = currentStep().id) {
     connect: "Test SSH + Path",
     discover: "Discover Homes",
     readme: "Load README",
+    preinstall: state.preinstallDone ? "Pre-Install Confirmed" : "Confirm Pre-Install",
     spbUp: state.spbFreshInstallNoDomain ? "Accept Fresh Install" : "Verify Services Up",
     spbPrepare: "Prepare SPBAT",
     spbBackupShutdown: state.backupShutdownCheck ? "Recheck Shutdown" : "Verify Shutdown",
@@ -1848,6 +1880,7 @@ function stepActionBlockReason(stepId = currentStep().id) {
   if (stepId === "connect") return "";
   if (stepId === "discover" && !state.connected) return "Test SSH and validate the patch directory before discovering Oracle homes.";
   if (stepId === "readme" && !state.connected) return "Test SSH and validate the patch directory before loading the README from the patch location.";
+  if (stepId === "preinstall" && !state.readmeAnalysis) return "Load and analyze the README before completing pre-install actions.";
   if (stepId === "spbBackupShutdown" && (!state.readmeAnalysis || !hasHome)) return "Load the SPB README and select the target Oracle home before stopping services for backup.";
   if (stepId === "spbInactive" && (!state.readmeAnalysis || !hasHome)) return "Load the SPB README and select the target Oracle home before reviewing inactive patches.";
   if (stepId === "spbInactive" && isStackPatchBundle() && !backupShutdownComplete()) return "Complete Stop for Backup before inactive patch review so cleanup happens only after stopped-home backups are in place.";
@@ -1866,11 +1899,13 @@ function stepActionBlockReason(stepId = currentStep().id) {
   if (stepId === "spbPrestop" && isStackPatchBundle() && !spbInactiveEarlyComplete()) return "Check inactive patches after stopped-home backup confirmation and before SPBAT PreStop. Remove them or explicitly keep them for this run.";
   if (stepId === "shutdown" && isStackPatchBundle() && !(state.spbPrestopDone || state.spbPrestopExternalApproved)) return "Run or confirm SPBAT PreStop before stopping services.";
   if (stepId === "shutdown" && !isStackPatchBundle() && (!state.readmeAnalysis || !hasHome)) return "Load the README and select the target Oracle home before shutdown verification.";
+  if (stepId === "shutdown" && !isStackPatchBundle() && state.readmeAnalysis.preinstallRequiresManual && !state.preinstallDone) return "Complete and confirm the README pre-install actions before stopping services.";
   if (stepId === "backup" && !hasHome) return "Discover and select the target Oracle home before checking backup space.";
   if (stepId === "backup" && !backupShutdownComplete()) return "Verify selected-home services are stopped before creating file-system tar backups.";
   if (stepId === "spbDowntime" && isStackPatchBundle() && !(state.spbPrestopDone || state.spbPrestopExternalApproved)) return "Run or confirm SPBAT PreStop before running SPBAT Downtime.";
   if (stepId === "spbDowntime" && (!shutdownGateSatisfied("shutdown") || !backupGateComplete())) return `Complete shutdown and backup gates before running SPBAT Downtime. ${backupGateBlockReason()}`.trim();
   if (stepId === "spbDowntime" && isStackPatchBundle() && !spbInactiveDowntimeReady()) return "Check inactive patches and either remove them or explicitly keep them before SPBAT Downtime.";
+  if (stepId === "apply" && !isStackPatchBundle() && state.readmeAnalysis && state.readmeAnalysis.preinstallRequiresManual && !state.preinstallDone) return "Complete and confirm the README pre-install actions before applying the patch.";
   if (stepId === "apply" && !shutdownGateSatisfied("shutdown")) return "Verify shutdown or explicitly accept the shutdown gate before applying the patch.";
   if (stepId === "apply" && (!state.opatchReady || !backupGateComplete())) return `Validate OPatch and complete the backup gate before applying the patch. ${backupGateBlockReason()}`.trim();
   if (stepId === "apply" && isBatchNapply() && state.form.batchSelection === "ids" && !String(state.form.batchPatchIds || "").trim()) return "Enter the patch IDs to apply with OPatch napply.";
@@ -1943,7 +1978,7 @@ function rollbackAvailableForCurrentRun() {
 }
 
 function shouldShowMonitor(stepId) {
-  return ["opatch", "spbInactive", "spbPrepare", "spbUp", "spbPrestop", "spbBackupShutdown", "shutdown", "backup", "spbDowntime", "postinstall", "restart", "spbPoststart", "apply", "report"].includes(stepId);
+  return ["preinstall", "opatch", "spbInactive", "spbPrepare", "spbUp", "spbPrestop", "spbBackupShutdown", "shutdown", "backup", "spbDowntime", "postinstall", "restart", "spbPoststart", "apply", "report"].includes(stepId);
 }
 
 function render() {
@@ -1958,6 +1993,7 @@ function renderStep() {
     connect: renderConnectStep,
     discover: renderDiscoverStep,
     readme: renderReadmeStep,
+    preinstall: renderPreinstallStep,
     spbBackupShutdown: renderShutdownStep,
     spbUp: renderSpbUpStep,
     spbPrepare: renderSpbPrepareStep,
@@ -2208,6 +2244,16 @@ function renderAnalysis(analysis) {
     ` : ""}
     <h3>Stop Notes</h3>
     <ul class="compact-list">${analysis.stopSteps.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+    ${!spb && analysis.installationSection ? `
+      <h3>README Installation Instructions</h3>
+      ${analysis.preinstallRequiresManual ? `
+        <div class="review-box is-warning readme-warning">
+          <strong>Manual pre-install action required</strong>
+          <p>PatchPilot found database or credential-dependent work before OPatch apply. It will add a mandatory Pre-Install phase and will not execute these instructions or collect the OIG schema password.</p>
+        </div>
+      ` : ""}
+      ${renderInstructionCards(analysis.installationSteps, analysis.installationManualSteps, "Install")}
+    ` : ""}
     <h3>Postinstall Notes</h3>
     ${analysis.postinstallRequiresManual ? `
       <div class="review-box is-warning readme-warning">
@@ -2236,6 +2282,36 @@ function renderInstructionCards(items, manualFlags = [], label = "Step", complet
         `;
       }).join("")}
     </div>
+  `;
+}
+
+function renderPreinstallStep() {
+  const analysis = state.readmeAnalysis || analyzeReadme(state.readmeText);
+  return `
+    <div class="step-heading">
+      <p class="page-breadcrumb">Before Shutdown and Patch Apply</p>
+      <h2>Manual Pre-Install Actions</h2>
+    </div>
+    <div class="review-box is-warning">
+      <strong>Database credentials stay outside PatchPilot</strong>
+      <p>Run the extracted instructions through the customer's approved SQL client as the required schema user. PatchPilot does not request, save, or use the OIG schema password for one-off README actions.</p>
+    </div>
+    ${renderInstructionCards(analysis.preinstallSteps, analysis.preinstallSteps.map(() => true), "Pre-Install", state.preinstallDone)}
+    <label class="field">
+      <span>Execution reference or note</span>
+      <input id="preinstallNoteInput" value="${escapeHtml(state.preinstallNote)}" placeholder="Example: Executed by DBA; SQLPlus spool /tmp/40040980-preinstall.log">
+      <p class="field-help">Record the operator, spool/log location, ticket, or other evidence. Do not enter a password.</p>
+    </label>
+    <label class="toggle-row decision-row">
+      <input id="preinstallConfirmedInput" type="checkbox" ${state.preinstallConfirmed ? "checked" : ""}>
+      <span>I confirm every README pre-install action above completed successfully as the required schema or operating-system user.</span>
+    </label>
+    ${analysis.installationSection ? `
+      <div class="review-box is-info">
+        <strong>Source section</strong>
+        <p>Extracted from the README Installation Instructions before the OPatch apply instruction.</p>
+      </div>
+    ` : ""}
   `;
 }
 
@@ -4102,8 +4178,12 @@ function buildReportHtmlBody(report) {
           ["Inactive patch cleanup", analysis.inactivePatchCleanupRecommended ? "Review required" : "Not flagged"],
           ["Java prerequisite", analysis.javaPrereqRecommended ? "Review required" : "Not flagged"],
           ["OPatch heap setting", analysis.opatchHeapRecommended ? "Review required" : "Not flagged"],
+          ["Manual Pre-Install", analysis.preinstallRequiresManual ? report.preinstallDone ? "Confirmed" : "Required - not confirmed" : "Not flagged"],
+          ["Pre-Install Reference", report.preinstallNote || ""],
           ["Manual Postinstall", report.postinstallRequiresManual ? "Required" : "Not flagged"]
         ])}
+        <h5>Installation Instructions</h5>
+        ${reportInstructionList(analysis.installationSteps, analysis.installationManualSteps)}
         <h5>Stop Notes</h5>
         ${reportList(analysis.stopSteps, "No stop notes were captured from the README.")}
         <h5>Postinstall Instructions</h5>
@@ -4474,11 +4554,28 @@ function bindStepEvents(id) {
       state.readmePath = "";
       state.readmeAnalysis = null;
       state.completed.delete("readme");
+      resetPreinstallState();
       resetBackupPreflight();
       resetPostinstallState();
       renderControls();
     });
     bindSpbCommandSettingControls();
+  }
+
+  if (id === "preinstall") {
+    const checkbox = document.getElementById("preinstallConfirmedInput");
+    if (checkbox) checkbox.addEventListener("change", () => {
+      state.preinstallConfirmed = checkbox.checked;
+      if (!checkbox.checked) {
+        state.preinstallDone = false;
+        state.completed.delete("preinstall");
+      }
+      renderControls();
+    });
+    const note = document.getElementById("preinstallNoteInput");
+    if (note) note.addEventListener("input", () => {
+      state.preinstallNote = note.value;
+    });
   }
 
   if (id === "spbUp") {
@@ -4864,6 +4961,7 @@ async function runStepAction() {
     connect: testSsh,
     discover: discoverEnvironment,
     readme: analyzeReadmeAction,
+    preinstall: confirmPreinstall,
     spbUp: verifyServicesUp,
     spbPrepare: prepareSpbRun,
     spbBackupShutdown: verifyShutdown,
@@ -5016,6 +5114,7 @@ async function analyzeReadmeAction() {
       log(`README contains ${readmeMethod === "spbat" ? "SPBAT" : "OPatch"} references, but Patch Type ${selectedPatchType} keeps the ${selectedMethodLabel} workflow selected in Connect.`, "warn");
     }
     state.readmeAnalysis = analyzeReadme(state.readmeText);
+    resetPreinstallState();
     resetDatabaseBackupState();
     syncBackupCompletion();
     resetPostinstallState();
@@ -5030,6 +5129,34 @@ async function analyzeReadmeAction() {
     setBusy(false);
     render();
   }
+}
+
+async function confirmPreinstall() {
+  const analysis = state.readmeAnalysis || analyzeReadme(state.readmeText);
+  if (!analysis.preinstallRequiresManual) {
+    state.preinstallDone = true;
+    state.completed.add("preinstall");
+    render();
+    return;
+  }
+  if (!state.preinstallConfirmed) {
+    log("Confirm that every README pre-install action completed successfully before shutdown and patch apply.", "warn");
+    render();
+    return;
+  }
+  setBusy(true, "Confirming pre-install actions");
+  for (const step of analysis.preinstallSteps) {
+    const firstLine = step.split(/\r?\n/).find((line) => line.trim()) || "Manual pre-install action";
+    log(`Pre-install confirmed: ${firstLine.trim()}`, "warn");
+    await sleep(120);
+  }
+  if (state.preinstallNote.trim()) log(`Pre-install reference: ${state.preinstallNote.trim()}`, "pass");
+  state.preinstallDone = true;
+  state.completed.add("preinstall");
+  state.failed.delete("preinstall");
+  setStatus("Pre-install complete", "good");
+  setBusy(false);
+  render();
 }
 
 function acceptServicesUpManual() {
@@ -7857,6 +7984,9 @@ function buildReport(outcome) {
     readmePath: state.readmePath,
     selectedHome: reportSelectedHome(),
     readmeAnalysis: state.readmeAnalysis || analyzeReadme(state.readmeText),
+    preinstallConfirmed: state.preinstallConfirmed,
+    preinstallDone: state.preinstallDone,
+    preinstallNote: state.preinstallNote,
     opatchHeapOptions: opatchHeapOptions(),
     spbInstallType: isStackPatchBundle() ? spbInstallType() : "",
     spbExtraArgs: isStackPatchBundle() ? spbExtraArgs() : "",
@@ -7979,6 +8109,9 @@ function resetRun() {
   state.readmeText = "";
   state.readmePath = "";
   state.readmeAnalysis = null;
+  state.preinstallConfirmed = false;
+  state.preinstallDone = false;
+  state.preinstallNote = "";
   state.servicesUpConfirmed = false;
   state.servicesUpVerified = false;
   state.servicesUpManualAccepted = false;
