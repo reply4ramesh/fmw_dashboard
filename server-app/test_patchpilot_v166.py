@@ -142,8 +142,32 @@ class PatchPilotV166Tests(unittest.TestCase):
         self.assertIn('run_command(list_command)', cleanup_script)
         self.assertIn("Inactive patch deletion pass", cleanup_script)
         self.assertIn("did not change after two delete passes", cleanup_script)
+        self.assertLess(
+            cleanup_script.index("def parse_inactive_output(output):"),
+            cleanup_script.index("after = parse_inactive_output(recheck_output)"),
+        )
         compile(check_script, "<patchpilot-inactive-check>", "exec")
         compile(cleanup_script, "<patchpilot-inactive-cleanup>", "exec")
+
+        helper_source = cleanup_script.split("def parse_inactive_output(output):", 1)[1].split("\n\noutput_parts = []", 1)[0]
+        helper_namespace = {
+            "re": __import__("re"),
+            "retain_level": 1,
+            "oracle_home": "/opt/oracle/fmw",
+            "opatch": "/opt/oracle/fmw/OPatch/opatch",
+            "opatch_heap": {"effective": "-Xmx3072m"},
+            "properties_path": "/opt/oracle/fmw/OPatch/config/opatch.properties",
+            "current_retain_value": lambda: "1",
+            "command_text": lambda command: " ".join(command),
+        }
+        exec("def parse_inactive_output(output):" + helper_source, helper_namespace)
+        sample = "\n".join(
+            "There are 1 inactive RU patches in chain {0}".format(index)
+            for index in range(1, 18)
+        )
+        parsed = helper_namespace["parse_inactive_output"](sample)
+        self.assertEqual(17, parsed["inactivePatchCount"])
+        self.assertFalse(parsed["desiredReached"])
 
         javascript = (APP_ROOT / "patchpilot" / "assets" / "app.js").read_text(encoding="utf-8")
         self.assertIn('id="spbInactiveRemoveNowButton"', javascript)

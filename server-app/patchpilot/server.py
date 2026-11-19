@@ -1906,6 +1906,49 @@ def ensure_retain_property():
     return backup_path
 
 
+def parse_inactive_output(output):
+    total_line = ""
+    chain_counts = []
+    for line in output.splitlines():
+        if re.search(r"\bTotal\b", line, re.I) and re.search(r"\binactive\b", line, re.I):
+            total_line = line.strip()
+        chain_match = re.search(r"\bThere\s+are\s+(\d+)\s+inactive\b.*\bin\s+chain\s+\d+\b", line, re.I)
+        if chain_match:
+            chain_counts.append(int(chain_match.group(1)))
+    numbers = [int(item) for item in re.findall(r"(\d+)\s+inactive", total_line, re.I)]
+    lower = output.lower()
+    no_inactive = bool(re.search(r"\b(no|zero|0)\s+inactive\b", lower))
+    if chain_counts:
+        has_inactive = sum(chain_counts) > 0
+    elif numbers:
+        has_inactive = sum(numbers) > 0
+    else:
+        has_inactive = "inactive" in lower and not no_inactive
+    inactive_patch_count = sum(chain_counts) if chain_counts else (numbers[0] if numbers else None)
+    inactive_overlay_count = None if chain_counts else (numbers[1] if len(numbers) >= 2 else None)
+    highest_chain_count = max(chain_counts) if chain_counts else None
+    desired_reached = (not has_inactive) or (bool(chain_counts) and sum(chain_counts) <= retain_level) or (bool(numbers) and numbers[0] <= retain_level)
+    if chain_counts and not total_line:
+        total_line = "%s inactive patch(es) across %s RU chain(s); highest chain retain count is %s" % (sum(chain_counts), len(chain_counts), highest_chain_count)
+    return {
+        "oracleHome": oracle_home,
+        "retainLevel": retain_level,
+        "opatchHeap": opatch_heap,
+        "propertiesPath": properties_path,
+        "currentRetainInactivePatches": current_retain_value(),
+        "command": command_text([opatch, "util", "listorderedinactivepatches", "-oh", oracle_home]),
+        "output": output[-50000:],
+        "totalLine": total_line,
+        "inactivePatchCount": inactive_patch_count,
+        "inactiveOverlayCount": inactive_overlay_count,
+        "inactiveChainCounts": chain_counts,
+        "highestInactiveChainCount": highest_chain_count,
+        "hasInactive": has_inactive,
+        "desiredReached": desired_reached,
+        "status": "retained" if desired_reached else "cleanup-recommended",
+    }
+
+
 output_parts = []
 
 def record(text):
