@@ -1524,7 +1524,7 @@ def parse_inactive_output(output):
     inactive_patch_count = sum(chain_counts) if chain_counts else (numbers[0] if len(numbers) >= 1 else None)
     inactive_overlay_count = None if chain_counts else (numbers[1] if len(numbers) >= 2 else None)
     highest_chain_count = max(chain_counts) if chain_counts else None
-    desired_reached = (not has_inactive) or (bool(chain_counts) and sum(chain_counts) <= retain_level) or (bool(numbers) and numbers[0] <= retain_level)
+    desired_reached = (not has_inactive) or (bool(chain_counts) and max(chain_counts) <= retain_level) or (bool(numbers) and numbers[0] <= retain_level)
     if chain_counts and not total_line:
         total_line = "%s inactive patch(es) across %s RU chain(s); highest chain retain count is %s" % (sum(chain_counts), len(chain_counts), highest_chain_count)
     return {
@@ -1927,7 +1927,7 @@ def parse_inactive_output(output):
     inactive_patch_count = sum(chain_counts) if chain_counts else (numbers[0] if numbers else None)
     inactive_overlay_count = None if chain_counts else (numbers[1] if len(numbers) >= 2 else None)
     highest_chain_count = max(chain_counts) if chain_counts else None
-    desired_reached = (not has_inactive) or (bool(chain_counts) and sum(chain_counts) <= retain_level) or (bool(numbers) and numbers[0] <= retain_level)
+    desired_reached = (not has_inactive) or (bool(chain_counts) and max(chain_counts) <= retain_level) or (bool(numbers) and numbers[0] <= retain_level)
     if chain_counts and not total_line:
         total_line = "%s inactive patch(es) across %s RU chain(s); highest chain retain count is %s" % (sum(chain_counts), len(chain_counts), highest_chain_count)
     return {

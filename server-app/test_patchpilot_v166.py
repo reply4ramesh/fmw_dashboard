@@ -126,7 +126,7 @@ class PatchPilotV166Tests(unittest.TestCase):
         self.assertIn("preinstall: confirmPreinstall", javascript)
         self.assertIn("PatchPilot does not request, save, or use the OIG schema password", javascript)
 
-    def test_inactive_cleanup_repeats_delete_and_recheck_for_multiple_ru_chains(self):
+    def test_inactive_cleanup_rechecks_until_each_ru_chain_meets_retention(self):
         server = app.patchpilot_server
         request = {
             "oracleHome": "/opt/oracle/fmw",
@@ -137,7 +137,7 @@ class PatchPilotV166Tests(unittest.TestCase):
         check_script = server.build_spb_inactive_check_script(request)
         cleanup_script = server.build_spb_inactive_delete_script(request)
 
-        self.assertIn("sum(chain_counts) <= retain_level", check_script)
+        self.assertIn("max(chain_counts) <= retain_level", check_script)
         self.assertIn('while after.get("hasInactive") and not after.get("desiredReached")', cleanup_script)
         self.assertIn('run_command(list_command)', cleanup_script)
         self.assertIn("Inactive patch deletion pass", cleanup_script)
@@ -167,7 +167,12 @@ class PatchPilotV166Tests(unittest.TestCase):
         )
         parsed = helper_namespace["parse_inactive_output"](sample)
         self.assertEqual(17, parsed["inactivePatchCount"])
-        self.assertFalse(parsed["desiredReached"])
+        self.assertTrue(parsed["desiredReached"])
+        needs_cleanup = helper_namespace["parse_inactive_output"](
+            "There are 2 inactive RU patches in chain 1\nThere are 1 inactive RU patches in chain 2"
+        )
+        self.assertEqual(3, needs_cleanup["inactivePatchCount"])
+        self.assertFalse(needs_cleanup["desiredReached"])
 
         javascript = (APP_ROOT / "patchpilot" / "assets" / "app.js").read_text(encoding="utf-8")
         self.assertIn('id="spbInactiveRemoveNowButton"', javascript)
@@ -180,10 +185,12 @@ class PatchPilotV166Tests(unittest.TestCase):
         self.assertIn('element.scrollTop = element.scrollHeight;', javascript)
         self.assertIn('Inactive Patch Cleanup Job Output', javascript)
         self.assertIn('function spbInactiveRetainDescription', javascript)
-        self.assertIn('N-${level} (retain ${level} inactive RU/CPU patch', javascript)
+        self.assertIn('retain up to ${level} inactive RU/CPU patch', javascript)
         self.assertIn('retained for ${retention} rollback coverage', javascript)
         self.assertIn('detected; cleanup target is ${retention}', javascript)
         self.assertIn('Rollback retention target', javascript)
+        self.assertIn('Accept N-1 Retention and Continue', javascript)
+        self.assertIn('no additional inactive RU eligible for deletion', javascript)
 
 
 if __name__ == "__main__":

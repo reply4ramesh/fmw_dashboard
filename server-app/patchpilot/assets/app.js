@@ -1563,7 +1563,7 @@ function spbInactiveDesiredReached(check = state.spbInactiveCheck) {
 function spbInactiveRetainDescription(check = state.spbInactiveCheck) {
   const configured = Number.parseInt(String((check && check.retainLevel) || spbInactiveRetainLevel()), 10);
   const level = Number.isFinite(configured) && configured > 0 ? configured : 1;
-  return `N-${level} (retain ${level} inactive RU/CPU patch${level === 1 ? "" : "es"})`;
+  return `N-${level} (retain up to ${level} inactive RU/CPU patch${level === 1 ? "" : "es"} per RU chain)`;
 }
 
 function spbInactiveSummary(check = state.spbInactiveCheck) {
@@ -1583,6 +1583,9 @@ function spbInactiveSummary(check = state.spbInactiveCheck) {
     }
   } else {
     countSummary = check.totalLine || "Inactive patches reported";
+  }
+  if (check.desiredReached && chainCount) {
+    return `${patchCount} inactive patch${Number(patchCount) === 1 ? "" : "es"} retained for N-${Number.parseInt(String(check.retainLevel || spbInactiveRetainLevel()), 10) || 1} rollback: up to ${Number.parseInt(String(check.retainLevel || spbInactiveRetainLevel()), 10) || 1} inactive patch${(Number.parseInt(String(check.retainLevel || spbInactiveRetainLevel()), 10) || 1) === 1 ? "" : "es"} in each of ${chainCount} RU chain${chainCount === 1 ? "" : "s"}.`;
   }
   return check.desiredReached
     ? `${countSummary} retained for ${retention} rollback coverage.`
@@ -3071,7 +3074,7 @@ function renderSpbInactiveStep() {
     : result && result.status === "removed"
       ? "Inactive patches removed"
       : result && result.status === "already-retained"
-        ? "Rollback retain level already satisfied"
+        ? "N-1 rollback retention already satisfied"
         : state.spbInactiveSkipConfirmed
           ? "Inactive patches kept for this run"
           : deletionCandidate && state.spbInactiveRemoveConfirmed && !backupSafetyConfirmed
@@ -3100,7 +3103,7 @@ function renderSpbInactiveStep() {
           : deletionCandidate && state.spbInactiveRemoveConfirmed && !backupSafetyConfirmed
             ? "Complete the Backup step before deleting inactive patches."
             : retainDecisionCandidate
-              ? "OPatch found inactive patches, but the selected ORACLE_HOME is already within the requested N-1 retain level. Explicitly keep them for this run so the report records why PatchPilot did not delete anything."
+              ? `${spbInactiveSummary(check)} OPatch has no additional inactive RU eligible for deletion at this retention level. Accept the N-1 retention and continue.`
             : check
               ? deletionCandidate
                 ? "Inactive patches can slow SPBAT PreStop and Downtime. Because backups are already confirmed, remove them now or explicitly keep them for this run."
@@ -3153,10 +3156,10 @@ function renderSpbInactiveStep() {
         <p>${blockingCleanupError
           ? "PatchPilot could not confirm inactive patch cleanup completed successfully. Retry after reviewing the output, generate an SR report, or explicitly keep inactive patches for this run so the risk is recorded before continuing."
           : retainDecisionCandidate
-            ? "The inactive patch count is already within the requested rollback retain level. Use this option to continue without deleting and record the retain decision in the report."
+            ? `${spbInactiveSummary(check)} No additional inactive RU is eligible for deletion. Accept this N-1 retention and continue.`
             : "If the customer does not want to remove inactive patches now, explicitly keep them for this run so PatchPilot records the longer SPBAT runtime risk in the report."}</p>
         <div class="inline-actions">
-          <button id="spbInactiveKeepAndContinueButton" class="button button-secondary" type="button">Continue Without Deleting</button>
+          <button id="spbInactiveKeepAndContinueButton" class="button button-secondary" type="button">${retainDecisionCandidate ? "Accept N-1 Retention and Continue" : "Continue Without Deleting"}</button>
           ${blockingCleanupError ? `<button id="spbInactiveFailureReportButton" class="button button-secondary" type="button">Generate SR Report</button>` : ""}
         </div>
       </div>
@@ -6925,7 +6928,7 @@ async function runSpbInactivePatchReview() {
       state.completed.delete("spbInactive");
       state.failed.delete("spbInactive");
       setStatus("Inactive patches within retain level", "neutral");
-      log(`Inactive patches are already within retain level N-${spbInactiveRetainLevel()}: ${spbInactiveSummary(state.spbInactiveCheck)}. Choose Continue Without Deleting to record this decision.`, "warn");
+      log(`${spbInactiveSummary(state.spbInactiveCheck)} OPatch has no additional inactive RU eligible for deletion. Choose Accept N-1 Retention and Continue to record this decision.`, "warn");
     } else {
       state.spbInactiveReviewed = false;
       state.completed.delete("spbInactive");
