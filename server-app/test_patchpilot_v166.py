@@ -1,6 +1,9 @@
+import contextlib
+import io
 import importlib.util
 import pathlib
 import sys
+import tempfile
 import unittest
 
 
@@ -13,6 +16,54 @@ SPEC.loader.exec_module(app)
 
 
 class PatchPilotV166Tests(unittest.TestCase):
+    def test_spb_bundle_is_resolved_from_parent_or_bundle_directory(self):
+        server = app.patchpilot_server
+        with tempfile.TemporaryDirectory() as temp_dir:
+            extraction_root = pathlib.Path(temp_dir) / "OctoberSPB"
+            bundle_root = extraction_root / "IDM_SPB_14.1.2.1.261008"
+            spbat_dir = bundle_root / "tools" / "spbat" / "generic" / "SPBAT"
+            spbat_dir.mkdir(parents=True)
+            (spbat_dir / "spbat.sh").write_text("#!/bin/sh\n", encoding="utf-8")
+            (bundle_root / "README.txt").write_text("Stack Patch Bundle\n", encoding="utf-8")
+
+            for supplied_path in (extraction_root, bundle_root):
+                script = server.build_ssh_test_script({
+                    "patchPath": str(supplied_path),
+                    "patchType": "Stack Patch Bundle",
+                })
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    exec(compile(script, "<patchpilot-spb-path-test>", "exec"), {})
+                payload = server.parse_discovery_output(output.getvalue())
+                validation = payload["patchPath"]
+                self.assertTrue(validation["ok"])
+                self.assertEqual(str(bundle_root), validation["bundlePath"])
+                self.assertEqual(str(spbat_dir / "spbat.sh"), validation["spbatScript"])
+                self.assertEqual(str(bundle_root / "README.txt"), validation["readmePath"])
+
+            prepare_script = server.build_spb_prepare_script(str(extraction_root), "", "CHG-189")
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                exec(compile(prepare_script, "<patchpilot-spb-prepare-test>", "exec"), {})
+            prepared = server.parse_discovery_output(output.getvalue())
+            self.assertEqual(str(bundle_root), prepared["patchPath"])
+            self.assertEqual(str(spbat_dir / "spbat.sh"), prepared["spbatScript"])
+            self.assertEqual(str(bundle_root / "spbat_logs"), prepared["logDir"])
+
+            second_spbat = extraction_root / "IDM_SPB_14.1.2.1.261099" / "tools" / "spbat" / "generic" / "SPBAT"
+            second_spbat.mkdir(parents=True)
+            (second_spbat / "spbat.sh").write_text("#!/bin/sh\n", encoding="utf-8")
+            ambiguous_script = server.build_ssh_test_script({
+                "patchPath": str(extraction_root),
+                "patchType": "Stack Patch Bundle",
+            })
+            with self.assertRaisesRegex(RuntimeError, "Multiple SPB bundles"):
+                exec(compile(ambiguous_script, "<patchpilot-ambiguous-spb-test>", "exec"), {})
+
+        javascript = (APP_ROOT / "patchpilot" / "assets" / "app.js").read_text(encoding="utf-8")
+        self.assertIn("state.form.patchPath = resolvedBundlePath;", javascript)
+        self.assertIn("Resolved SPB bundle", javascript)
+
     def test_batch_napply_supports_all_ids_and_patch_list_modes(self):
         server = app.patchpilot_server
 

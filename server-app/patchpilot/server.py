@@ -1013,21 +1013,49 @@ request = __PATCHSCOPE_SPB_JSON__
 patch_dir = os.path.abspath(str(request.get("patchPath") or ""))
 change_ref = str(request.get("changeRef") or "spb-run")
 safe_ref = re.sub(r"[^A-Za-z0-9_.-]+", "_", change_ref).strip("_") or "spb-run"
-log_dir = str(request.get("logDir") or "").strip()
-if not log_dir:
-    log_dir = os.path.join(patch_dir, "spbat_logs")
-log_dir = os.path.abspath(log_dir)
 
 if not patch_dir or not os.path.isdir(patch_dir):
     raise RuntimeError("SPB download directory does not exist: %s" % patch_dir)
 
-spbat_dir = os.path.join(patch_dir, "tools", "spbat", "generic", "SPBAT")
-spbat_sh = os.path.join(spbat_dir, "spbat.sh")
+
+def resolve_spb_bundle(base):
+    direct_script = os.path.join(base, "tools", "spbat", "generic", "SPBAT", "spbat.sh")
+    if os.path.isfile(direct_script):
+        return base, direct_script
+    candidates = []
+    for root, dirs, files in os.walk(base):
+        relative = os.path.relpath(root, base)
+        depth = 0 if relative == "." else relative.count(os.sep) + 1
+        if depth > 6:
+            dirs[:] = []
+            continue
+        dirs[:] = [name for name in dirs if name.lower() not in ("backup", "backups", ".git", "__macosx", "logs", "spbat_logs")]
+        if "spbat.sh" not in files or not root.replace("\\", "/").lower().rstrip("/").endswith("/tools/spbat/generic/spbat"):
+            continue
+        bundle = root
+        for unused in range(4):
+            bundle = os.path.dirname(bundle)
+        candidates.append((depth, bundle, os.path.join(root, "spbat.sh")))
+    if not candidates:
+        return "", ""
+    candidates.sort(key=lambda item: (item[0], item[1].lower()))
+    bundle_paths = sorted(set(item[1] for item in candidates))
+    if len(bundle_paths) > 1:
+        raise RuntimeError("Multiple SPB bundles were found below %s. Enter the specific bundle directory: %s" % (base, ", ".join(bundle_paths[:5])))
+    return candidates[0][1], candidates[0][2]
+
+
+supplied_patch_dir = patch_dir
+patch_dir, spbat_sh = resolve_spb_bundle(patch_dir)
+if not spbat_sh:
+    raise RuntimeError("SPBAT shell script was not found below %s. Expected tools/spbat/generic/SPBAT/spbat.sh in the SPB bundle directory." % supplied_patch_dir)
+spbat_dir = os.path.dirname(spbat_sh)
+log_dir = str(request.get("logDir") or "").strip()
+if not log_dir:
+    log_dir = os.path.join(patch_dir, "spbat_logs")
+log_dir = os.path.abspath(log_dir)
 bundle_props = os.path.join(patch_dir, "spbat-bundle.properties")
 version_file = os.path.join(spbat_dir, "version.txt")
-
-if not os.path.isfile(spbat_sh):
-    raise RuntimeError("SPBAT shell script was not found under %s." % spbat_dir)
 
 os.makedirs(log_dir, exist_ok=True)
 if not os.access(log_dir, os.W_OK):
@@ -2691,8 +2719,6 @@ log_dir = os.path.abspath(request["logDir"])
 extra_args_text = request.get("extraArgs") or ""
 stream_initial_lines = max(20, int(request.get("streamInitialLines") or 120))
 heartbeat_seconds = max(15, int(request.get("heartbeatSeconds") or 60))
-spbat_dir = os.path.join(patch_dir, "tools", "spbat", "generic", "SPBAT")
-spbat_sh = os.path.join(spbat_dir, "spbat.sh")
 __PATCHSCOPE_OPATCH_HEAP_HELPER__
 opatch_heap = configure_opatch_heap(request.get("opatchHeapOptions"))
 
@@ -2700,8 +2726,40 @@ if not os.path.isdir(oracle_home):
     raise RuntimeError("ORACLE_HOME does not exist: %s" % oracle_home)
 if not os.path.isdir(patch_dir):
     raise RuntimeError("SPB download directory does not exist: %s" % patch_dir)
-if not os.path.isfile(spbat_sh):
-    raise RuntimeError("SPBAT shell script was not found: %s" % spbat_sh)
+
+
+def resolve_spb_bundle(base):
+    direct_script = os.path.join(base, "tools", "spbat", "generic", "SPBAT", "spbat.sh")
+    if os.path.isfile(direct_script):
+        return base, direct_script
+    candidates = []
+    for root, dirs, files in os.walk(base):
+        relative = os.path.relpath(root, base)
+        depth = 0 if relative == "." else relative.count(os.sep) + 1
+        if depth > 6:
+            dirs[:] = []
+            continue
+        dirs[:] = [name for name in dirs if name.lower() not in ("backup", "backups", ".git", "__macosx", "logs", "spbat_logs")]
+        if "spbat.sh" not in files or not root.replace("\\", "/").lower().rstrip("/").endswith("/tools/spbat/generic/spbat"):
+            continue
+        bundle = root
+        for unused in range(4):
+            bundle = os.path.dirname(bundle)
+        candidates.append((depth, bundle, os.path.join(root, "spbat.sh")))
+    if not candidates:
+        return "", ""
+    candidates.sort(key=lambda item: (item[0], item[1].lower()))
+    bundle_paths = sorted(set(item[1] for item in candidates))
+    if len(bundle_paths) > 1:
+        raise RuntimeError("Multiple SPB bundles were found below %s. Enter the specific bundle directory: %s" % (base, ", ".join(bundle_paths[:5])))
+    return candidates[0][1], candidates[0][2]
+
+
+supplied_patch_dir = patch_dir
+patch_dir, spbat_sh = resolve_spb_bundle(patch_dir)
+if not spbat_sh:
+    raise RuntimeError("SPBAT shell script was not found below %s. Expected tools/spbat/generic/SPBAT/spbat.sh in the SPB bundle directory." % supplied_patch_dir)
+spbat_dir = os.path.dirname(spbat_sh)
 
 try:
     extra_args = shlex.split(extra_args_text) if extra_args_text else []
@@ -5504,15 +5562,48 @@ def release_target_job(key, job_id):
 
 def build_ssh_test_script(body):
     patch_path = str(body.get("patchPath") or "").strip()
-    payload = {"patchPath": patch_path}
+    patch_type = str(body.get("patchType") or "").strip()
+    payload = {"patchPath": patch_path, "patchType": patch_type}
     script = r'''
 import getpass
 import json
 import os
+import re
 import socket
 
 request = json.loads(__PATCHSCOPE_SSH_TEST_JSON__)
 patch_path = str(request.get("patchPath") or "").strip()
+patch_type = str(request.get("patchType") or "").strip()
+
+
+def resolve_spb_bundle(base):
+    direct_script = os.path.join(base, "tools", "spbat", "generic", "SPBAT", "spbat.sh")
+    if os.path.isfile(direct_script):
+        return base, direct_script
+    candidates = []
+    for root, dirs, files in os.walk(base):
+        relative = os.path.relpath(root, base)
+        depth = 0 if relative == "." else relative.count(os.sep) + 1
+        if depth > 6:
+            dirs[:] = []
+            continue
+        dirs[:] = [name for name in dirs if name.lower() not in ("backup", "backups", ".git", "__macosx", "logs", "spbat_logs")]
+        if "spbat.sh" not in files:
+            continue
+        normalized = root.replace("\\", "/").lower().rstrip("/")
+        if not normalized.endswith("/tools/spbat/generic/spbat"):
+            continue
+        bundle = root
+        for unused in range(4):
+            bundle = os.path.dirname(bundle)
+        candidates.append((depth, bundle, os.path.join(root, "spbat.sh")))
+    if not candidates:
+        return "", ""
+    candidates.sort(key=lambda item: (item[0], item[1].lower()))
+    bundle_paths = sorted(set(item[1] for item in candidates))
+    if len(bundle_paths) > 1:
+        raise RuntimeError("Multiple SPB bundles were found below %s. Enter the specific bundle directory: %s" % (base, ", ".join(bundle_paths[:5])))
+    return candidates[0][1], candidates[0][2]
 
 
 def readme_candidates(base):
@@ -5581,12 +5672,28 @@ def validate_patch_path(value):
             "readmePath": "",
             "entryCount": 0,
         }
-    candidates = readme_candidates(resolved)
+    is_spb = bool(re.search(r"stack\s+patch\s+bundle|\bspb\b|\bcspu\b", patch_type, re.I))
+    bundle_path, spbat_script = resolve_spb_bundle(resolved) if is_spb else ("", "")
+    if is_spb and not spbat_script:
+        return {
+            "ok": False,
+            "path": value,
+            "resolvedPath": resolved,
+            "bundlePath": "",
+            "spbatScript": "",
+            "message": "Patch directory is reachable, but SPBAT was not found below it. Expected tools/spbat/generic/SPBAT/spbat.sh in the SPB bundle directory.",
+            "readmePath": "",
+            "entryCount": len(entries),
+        }
+    readme_base = bundle_path or resolved
+    candidates = readme_candidates(readme_base)
     if not candidates:
         return {
             "ok": False,
             "path": value,
             "resolvedPath": resolved,
+            "bundlePath": bundle_path,
+            "spbatScript": spbat_script,
             "message": "Patch Directory on Server is reachable, but no README file was found in the patch directory or the first two subdirectory levels.",
             "readmePath": "",
             "entryCount": len(entries),
@@ -5595,7 +5702,9 @@ def validate_patch_path(value):
         "ok": True,
         "path": value,
         "resolvedPath": resolved,
-        "message": "Patch directory is reachable and README is present.",
+        "bundlePath": bundle_path,
+        "spbatScript": spbat_script,
+        "message": "Patch directory is reachable; the SPB bundle and README are present." if is_spb else "Patch directory is reachable and README is present.",
         "readmePath": sorted(candidates, key=lambda item: (len(item), item.lower()))[0],
         "entryCount": len(entries),
     }

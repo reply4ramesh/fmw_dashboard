@@ -453,7 +453,8 @@ function connectionPayload() {
     password: state.form.password,
     sudoAuth: state.form.sudoAuth,
     sudoPassword: state.form.sudoAuth === "separate" ? state.form.sudoPassword : "",
-    patchPath: state.form.patchPath
+    patchPath: state.form.patchPath,
+    patchType: state.form.patchType
   };
 }
 
@@ -2103,7 +2104,7 @@ function renderConnectStep() {
         ${state.form.batchSelection === "ids" ? `<label class="field"><span>Patch IDs</span><input id="batchPatchIdsInput" value="${escapeHtml(state.form.batchPatchIds)}" placeholder="39100536, 39951765, 39987730"><small>Comma- or space-separated numeric patch IDs found below the patch directory.</small></label>` : ""}
         ${state.form.batchSelection === "file" ? `<label class="field wide"><span>Patch-list File on Target Server</span><input id="patchListFileInput" value="${escapeHtml(state.form.patchListFile)}" placeholder="/u01/stage/OHS/binary_patches/linux64_patchlist.txt"><small>PatchPilot validates every listed directory before passing this file to OPatch -phBaseFile.</small></label>` : ""}
       ` : ""}
-      <label class="field wide"><span>Patch Directory on Target Server</span><input id="patchPathInput" value="${escapeHtml(state.form.patchPath)}" placeholder="Example: /u01/stage/IDM_SPB_14.1.2.1.VERSION"></label>
+      <label class="field wide"><span>Patch Directory on Target Server</span><input id="patchPathInput" value="${escapeHtml(state.form.patchPath)}" placeholder="Example: /u01/stage/IDM_SPB_14.1.2.1.VERSION">${isStackPatchBundle() ? '<p class="field-help">Enter either the extracted SPB bundle directory or its parent directory. PatchPilot locates tools/spbat/generic/SPBAT/spbat.sh and uses the resolved bundle root.</p>' : ""}</label>
     </div>
     ${result ? `
       <div class="review-box connect-result ${resultTone}">
@@ -5037,12 +5038,16 @@ async function testSsh() {
     const result = await postJson("api/ssh/test", connectionPayload());
     const validation = result.validation || {};
     const patchPath = validation.patchPath || {};
+    const suppliedPatchPath = state.form.patchPath;
+    const resolvedBundlePath = isStackPatchBundle() ? String(patchPath.bundlePath || "").trim() : "";
     const sshTarget = `${state.form.user}@${state.form.host}:${state.form.port}`;
     const remoteUser = validation.user && validation.host ? `${validation.user}@${validation.host}` : sshTarget;
     const details = [
       { label: "SSH Login", value: sshTarget, mono: true },
       { label: "Command Execution", value: `Verified as ${remoteUser}`, mono: true },
       { label: "Patch directory", value: patchPath.resolvedPath || state.form.patchPath || "Not provided", mono: true },
+      ...(resolvedBundlePath ? [{ label: "Resolved SPB bundle", value: resolvedBundlePath, mono: true }] : []),
+      ...(patchPath.spbatScript ? [{ label: "SPBAT script", value: patchPath.spbatScript, mono: true }] : []),
       { label: "Directory check", value: patchPath.ok ? "Exists, readable, and searchable" : (patchPath.message || "Failed") },
       { label: "README check", value: patchPath.readmePath ? patchPath.readmePath : "Not found", mono: Boolean(patchPath.readmePath) }
     ];
@@ -5060,6 +5065,9 @@ async function testSsh() {
       log(patchPath.message || "Patch Directory on Server could not be validated.", "error");
       return;
     }
+    if (resolvedBundlePath) {
+      state.form.patchPath = resolvedBundlePath;
+    }
     state.connected = true;
     state.completed.add("connect");
     dom.connectionStatus.textContent = `SSH and patch path ready for ${sshTarget}`;
@@ -5071,6 +5079,10 @@ async function testSsh() {
     };
     log(`SSH connection validated for ${sshTarget}.`, "pass");
     log(`Patch directory validated: ${patchPath.resolvedPath || state.form.patchPath}.`, "pass");
+    if (resolvedBundlePath && resolvedBundlePath !== suppliedPatchPath.replace(/\/+$/g, "")) {
+      log(`SPB bundle resolved from ${suppliedPatchPath} to ${resolvedBundlePath}.`, "pass");
+    }
+    if (patchPath.spbatScript) log(`SPBAT found: ${patchPath.spbatScript}.`, "pass");
     if (patchPath.readmePath) log(`README found: ${patchPath.readmePath}.`, "pass");
   } catch (error) {
     state.connected = false;
@@ -5328,6 +5340,7 @@ async function prepareSpbRun() {
       changeRef: state.form.changeRef
     });
     state.spbPrepareResult = result.spb;
+    if (result.spb.patchPath) state.form.patchPath = result.spb.patchPath;
     state.form.spbLogDir = result.spb.logDir || spbLogDir();
     const candidates = Array.isArray(result.spb.opatchCandidates) ? result.spb.opatchCandidates : [];
     const readmes = Array.isArray(result.spb.opatchReadmes) ? result.spb.opatchReadmes : [];
