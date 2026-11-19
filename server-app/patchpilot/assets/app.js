@@ -1595,6 +1595,7 @@ function spbInactiveSummary(check = state.spbInactiveCheck) {
 function spbInactiveCleanupSatisfied(check = state.spbInactiveCheck, result = state.spbInactiveResult) {
   if (result && ["removed", "already-retained", "none"].includes(result.status)) return true;
   if (check && !check.hasInactive) return true;
+  if (check && check.desiredReached) return true;
   return false;
 }
 
@@ -3036,7 +3037,6 @@ function renderSpbInactiveStep() {
   const hasInactive = spbInactiveHasPatches(check);
   const desiredReached = spbInactiveDesiredReached(check);
   const deletionCandidate = Boolean(check && hasInactive && !desiredReached);
-  const retainDecisionCandidate = Boolean(check && hasInactive && desiredReached && !spbInactiveCleanupSucceeded(result));
   const backupComplete = spbInactiveBackupSafetyConfirmed();
   const backupSafetyConfirmed = spbInactiveBackupSafetyConfirmed();
   const earlyComplete = spbInactiveEarlyComplete();
@@ -3046,7 +3046,7 @@ function renderSpbInactiveStep() {
   const cleanupSucceeded = spbInactiveCleanupSucceeded(result);
   const cleanupIssue = spbInactiveCleanupIssue(result);
   const blockingCleanupError = Boolean(!state.spbInactiveSkipConfirmed && (cleanupIssue || state.spbInactiveError));
-  const exitDecisionAvailable = Boolean(!state.spbInactiveSkipConfirmed && backupComplete && (deletionCandidate || retainDecisionCandidate || blockingCleanupError));
+  const exitDecisionAvailable = Boolean(!state.spbInactiveSkipConfirmed && backupComplete && (deletionCandidate || blockingCleanupError));
   const dryRunCleanupPreview = Boolean(dom.dryRunToggle && dom.dryRunToggle.checked && spbInactiveDeleteReady());
   const statusClass = jobRunning
     ? "is-info"
@@ -3058,8 +3058,6 @@ function renderSpbInactiveStep() {
         ? "is-warning"
         : deletionCandidate && state.spbInactiveRemoveConfirmed && !backupSafetyConfirmed
           ? "is-danger"
-          : retainDecisionCandidate
-            ? "is-warning"
           : check
             ? deletionCandidate ? "is-warning" : "is-good"
             : "is-info";
@@ -3079,8 +3077,8 @@ function renderSpbInactiveStep() {
           ? "Inactive patches kept for this run"
           : deletionCandidate && state.spbInactiveRemoveConfirmed && !backupSafetyConfirmed
             ? "Backup confirmation required"
-            : retainDecisionCandidate
-              ? "Inactive patches within retain level"
+            : desiredReached
+              ? "Retention target already satisfied"
             : check
               ? deletionCandidate ? "Inactive patches found" : "Inactive patch review complete"
               : "Check inactive patches before PreStop";
@@ -3102,8 +3100,8 @@ function renderSpbInactiveStep() {
           ? "PatchPilot will record that inactive patches were intentionally retained. SPBAT can take longer when many inactive patches remain."
           : deletionCandidate && state.spbInactiveRemoveConfirmed && !backupSafetyConfirmed
             ? "Complete the Backup step before deleting inactive patches."
-            : retainDecisionCandidate
-              ? `${spbInactiveSummary(check)} OPatch has no additional inactive RU eligible for deletion at this retention level. Accept the N-1 retention and continue.`
+            : desiredReached
+              ? `${spbInactiveSummary(check)} Nothing is eligible for deletion at the selected retention level. Continue to SPBAT PreStop, or change the retention level and scan again.`
             : check
               ? deletionCandidate
                 ? "Inactive patches can slow SPBAT PreStop and Downtime. Because backups are already confirmed, remove them now or explicitly keep them for this run."
@@ -3116,14 +3114,18 @@ function renderSpbInactiveStep() {
     </div>
     <div class="command-list">
       <code>${escapeHtml(spbInactiveListCommand())}</code>
-      <code>${escapeHtml(spbInactiveRetainCommand())}</code>
-      <code>${escapeHtml(spbInactiveDeleteCommand())}</code>
-      <code>${escapeHtml(spbInactiveCleanupCommand())}</code>
+      ${!desiredReached ? `
+        <code>${escapeHtml(spbInactiveRetainCommand())}</code>
+        <code>${escapeHtml(spbInactiveDeleteCommand())}</code>
+        <code>${escapeHtml(spbInactiveCleanupCommand())}</code>
+      ` : ""}
     </div>
     <div class="review-box is-info">
-      <strong>Optional step</strong>
-      <p>You may review and remove inactive patches before SPBAT PreStop, or skip this step and continue. Keeping inactive patches can make SPBAT take longer; PatchPilot records that decision in the final report.</p>
-      ${!jobRunning && !state.spbInactiveSkipConfirmed ? `
+      <strong>${desiredReached ? "Scan complete" : "Optional step"}</strong>
+      <p>${desiredReached
+        ? "The reported inactive patches are within the selected rollback retention level, so OPatch has nothing to delete. Continue, or change the retention level and scan again."
+        : "You may review and remove inactive patches before SPBAT PreStop, or skip this step and continue. Keeping inactive patches can make SPBAT take longer; PatchPilot records that decision in the final report."}</p>
+      ${!jobRunning && !state.spbInactiveSkipConfirmed && !desiredReached ? `
         <div class="inline-actions">
           <button id="spbInactiveSkipOptionalButton" class="button button-secondary" type="button">Skip This Optional Step</button>
         </div>
@@ -3155,11 +3157,9 @@ function renderSpbInactiveStep() {
         <strong>${blockingCleanupError ? "Continue needs a decision" : "Exit path available"}</strong>
         <p>${blockingCleanupError
           ? "PatchPilot could not confirm inactive patch cleanup completed successfully. Retry after reviewing the output, generate an SR report, or explicitly keep inactive patches for this run so the risk is recorded before continuing."
-          : retainDecisionCandidate
-            ? `${spbInactiveSummary(check)} No additional inactive RU is eligible for deletion. Accept this N-1 retention and continue.`
-            : "If the customer does not want to remove inactive patches now, explicitly keep them for this run so PatchPilot records the longer SPBAT runtime risk in the report."}</p>
+          : "If the customer does not want to remove inactive patches now, explicitly keep them for this run so PatchPilot records the longer SPBAT runtime risk in the report."}</p>
         <div class="inline-actions">
-          <button id="spbInactiveKeepAndContinueButton" class="button button-secondary" type="button">${retainDecisionCandidate ? "Accept N-1 Retention and Continue" : "Continue Without Deleting"}</button>
+          <button id="spbInactiveKeepAndContinueButton" class="button button-secondary" type="button">Continue Without Deleting</button>
           ${blockingCleanupError ? `<button id="spbInactiveFailureReportButton" class="button button-secondary" type="button">Generate SR Report</button>` : ""}
         </div>
       </div>
@@ -3178,7 +3178,7 @@ function renderSpbInactiveStep() {
         <div><span>OPatch properties</span><strong class="mono">${escapeHtml(check.propertiesPath || "")}</strong></div>
         <div><span>Services stopped before backup</span><strong>${escapeHtml(backupShutdownComplete() ? "Confirmed" : "Not confirmed")}</strong></div>
         <div><span>Backup safety</span><strong>${escapeHtml(backupComplete ? "Backup gate complete" : "Not confirmed yet")}</strong></div>
-        <div><span>Downtime gate</span><strong>${escapeHtml(downtimeReady ? "Ready" : cleanupIssue ? "Blocked by cleanup failure" : deletionCandidate || retainDecisionCandidate ? "Decision required" : "Not checked")}</strong></div>
+        <div><span>Downtime gate</span><strong>${escapeHtml(downtimeReady ? "Ready" : cleanupIssue ? "Blocked by cleanup failure" : deletionCandidate ? "Decision required" : "Not checked")}</strong></div>
         ${state.spbInactiveJobId ? `<div><span>${state.spbInactiveJobKind === "check" ? "Review" : "Cleanup"} job</span><strong>${escapeHtml(state.spbInactiveJobStatus || "unknown")}</strong></div>` : ""}
       </div>
     ` : ""}
@@ -3193,7 +3193,7 @@ function renderSpbInactiveStep() {
         ${result.returnCode ? `<div><span>Return code</span><strong>${escapeHtml(String(result.returnCode))}</strong></div>` : ""}
       </div>
     ` : ""}
-    ${check && hasInactive ? `
+    ${check && hasInactive && !desiredReached ? `
       ${backupComplete ? `
         <div class="review-box is-good">
           <strong>Backup gate complete</strong>
@@ -3205,21 +3205,17 @@ function renderSpbInactiveStep() {
           <p>${escapeHtml(backupGateBlockReason())}</p>
         </div>
       `}
-      ${!desiredReached ? `
-        <label class="toggle-row decision-row">
-          <input id="spbInactiveRemoveConfirmInput" type="checkbox" ${state.spbInactiveRemoveConfirmed ? "checked" : ""}>
-          <span>Confirm the customer approved deleting inactive patches and setting RETAIN_INACTIVE_PATCHES=${escapeHtml(String(spbInactiveRetainLevel()))} for N-${escapeHtml(String(spbInactiveRetainLevel()))} rollback retention.</span>
-        </label>
-        <div class="inline-actions">
-          <button id="spbInactiveRemoveNowButton" class="button button-primary" type="button" ${state.spbInactiveRemoveConfirmed && backupComplete && !jobRunning ? "" : "disabled"}>${jobRunning ? "Removing Inactive Patches..." : dom.dryRunToggle && dom.dryRunToggle.checked ? "Preview Inactive Cleanup" : result && result.status === "failed" ? "Retry Inactive Patch Removal" : "Remove Inactive Patches"}</button>
-          <span class="field-help">OPatch may require multiple delete and recheck passes when inactive patches span several RU chains.</span>
-        </div>
-      ` : ""}
+      <label class="toggle-row decision-row">
+        <input id="spbInactiveRemoveConfirmInput" type="checkbox" ${state.spbInactiveRemoveConfirmed ? "checked" : ""}>
+        <span>Confirm the customer approved deleting inactive patches and setting RETAIN_INACTIVE_PATCHES=${escapeHtml(String(spbInactiveRetainLevel()))} for N-${escapeHtml(String(spbInactiveRetainLevel()))} rollback retention.</span>
+      </label>
+      <div class="inline-actions">
+        <button id="spbInactiveRemoveNowButton" class="button button-primary" type="button" ${state.spbInactiveRemoveConfirmed && backupComplete && !jobRunning ? "" : "disabled"}>${jobRunning ? "Removing Inactive Patches..." : dom.dryRunToggle && dom.dryRunToggle.checked ? "Preview Inactive Cleanup" : result && result.status === "failed" ? "Retry Inactive Patch Removal" : "Remove Inactive Patches"}</button>
+        <span class="field-help">OPatch may require multiple delete and recheck passes when inactive patches span several RU chains.</span>
+      </div>
       <label class="toggle-row decision-row">
         <input id="spbInactiveSkipInput" type="checkbox" ${state.spbInactiveSkipConfirmed ? "checked" : ""}>
-        <span>${desiredReached
-          ? "Keep inactive patches for this run because the selected ORACLE_HOME is already within the requested retain level. The report will record that cleanup was not required."
-          : "Keep inactive patches for this run. I understand SPBAT may take longer and the report will record that cleanup was skipped."}</span>
+        <span>Keep inactive patches for this run. I understand SPBAT may take longer and the report will record that cleanup was skipped.</span>
       </label>
     ` : ""}
     ${!jobRunning && earlyComplete ? `
@@ -6924,11 +6920,13 @@ async function runSpbInactivePatchReview() {
       setStatus("Inactive patches kept", "good");
       log(`Inactive patches retained by user confirmation: ${spbInactiveSummary(state.spbInactiveCheck)}. SPBAT may take longer.`, "warn");
     } else if (state.spbInactiveCheck.desiredReached) {
-      state.spbInactiveReviewed = false;
-      state.completed.delete("spbInactive");
+      state.spbInactiveReviewed = true;
+      state.spbInactiveRemoveConfirmed = false;
+      state.spbInactiveSkipConfirmed = false;
+      state.completed.add("spbInactive");
       state.failed.delete("spbInactive");
-      setStatus("Inactive patches within retain level", "neutral");
-      log(`${spbInactiveSummary(state.spbInactiveCheck)} OPatch has no additional inactive RU eligible for deletion. Choose Accept N-1 Retention and Continue to record this decision.`, "warn");
+      setStatus("Retention target satisfied", "good");
+      log(`${spbInactiveSummary(state.spbInactiveCheck)} Nothing is eligible for deletion at the selected retention level. Continue, or change the retention level and scan again.`, "pass");
     } else {
       state.spbInactiveReviewed = false;
       state.completed.delete("spbInactive");

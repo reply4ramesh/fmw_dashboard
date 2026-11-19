@@ -189,8 +189,12 @@ class PatchPilotV166Tests(unittest.TestCase):
         self.assertIn('retained for ${retention} rollback coverage', javascript)
         self.assertIn('detected; cleanup target is ${retention}', javascript)
         self.assertIn('Rollback retention target', javascript)
-        self.assertIn('Accept N-1 Retention and Continue', javascript)
-        self.assertIn('no additional inactive RU eligible for deletion', javascript)
+        self.assertNotIn('Accept N-1 Retention and Continue', javascript)
+        self.assertIn('if (check && check.desiredReached) return true;', javascript)
+        self.assertIn('state.spbInactiveReviewed = true;', javascript)
+        self.assertIn('state.completed.add("spbInactive");', javascript)
+        self.assertIn('Nothing is eligible for deletion at the selected retention level.', javascript)
+        self.assertIn('change the retention level and scan again', javascript)
 
 
 if __name__ == "__main__":
