@@ -179,6 +179,11 @@ class PatchPilotV166Tests(unittest.TestCase):
         self.assertIn('data-auto-follow-log', javascript)
         self.assertIn('element.scrollTop = element.scrollHeight;', javascript)
         self.assertIn('Inactive Patch Cleanup Job Output', javascript)
+        self.assertIn('function spbInactiveRetainDescription', javascript)
+        self.assertIn('N-${level} (retain ${level} inactive RU/CPU patch', javascript)
+        self.assertIn('retained for ${retention} rollback coverage', javascript)
+        self.assertIn('detected; cleanup target is ${retention}', javascript)
+        self.assertIn('Rollback retention target', javascript)
 
 
 if __name__ == "__main__":

@@ -1560,16 +1560,33 @@ function spbInactiveDesiredReached(check = state.spbInactiveCheck) {
   return Boolean(check && check.desiredReached);
 }
 
+function spbInactiveRetainDescription(check = state.spbInactiveCheck) {
+  const configured = Number.parseInt(String((check && check.retainLevel) || spbInactiveRetainLevel()), 10);
+  const level = Number.isFinite(configured) && configured > 0 ? configured : 1;
+  return `N-${level} (retain ${level} inactive RU/CPU patch${level === 1 ? "" : "es"})`;
+}
+
 function spbInactiveSummary(check = state.spbInactiveCheck) {
   if (!check) return "Not checked";
-  if (!check.hasInactive) return "No inactive patches reported";
-  if (check.totalLine) return check.totalLine;
   const patchCount = check.inactivePatchCount;
   const overlayCount = check.inactiveOverlayCount;
-  const parts = [];
-  if (patchCount !== null && patchCount !== undefined) parts.push(`${patchCount} inactive patch chain(s)`);
-  if (overlayCount !== null && overlayCount !== undefined) parts.push(`${overlayCount} inactive overlay patch(es)`);
-  return parts.length ? parts.join(", ") : "Inactive patches reported; review OPatch output";
+  const chainCount = Array.isArray(check.inactiveChainCounts) ? check.inactiveChainCounts.length : 0;
+  const retention = spbInactiveRetainDescription(check);
+  if (!check.hasInactive) return `0 inactive patches reported; ${retention} has no inactive patch to retain.`;
+  let countSummary = "";
+  if (patchCount !== null && patchCount !== undefined && chainCount) {
+    countSummary = `${patchCount} inactive patch${Number(patchCount) === 1 ? "" : "es"} across ${chainCount} RU chain${chainCount === 1 ? "" : "s"}`;
+  } else if (patchCount !== null && patchCount !== undefined) {
+    countSummary = `${patchCount} inactive RU/CPU patch${Number(patchCount) === 1 ? "" : "es"}`;
+    if (overlayCount !== null && overlayCount !== undefined) {
+      countSummary += ` and ${overlayCount} inactive overlay patch${Number(overlayCount) === 1 ? "" : "es"}`;
+    }
+  } else {
+    countSummary = check.totalLine || "Inactive patches reported";
+  }
+  return check.desiredReached
+    ? `${countSummary} retained for ${retention} rollback coverage.`
+    : `${countSummary} detected; cleanup target is ${retention}.`;
 }
 
 function spbInactiveCleanupSatisfied(check = state.spbInactiveCheck, result = state.spbInactiveResult) {
@@ -3152,7 +3169,7 @@ function renderSpbInactiveStep() {
     ${check ? `
       <div class="detail-grid">
         <div><span>Inactive patch summary</span><strong>${escapeHtml(spbInactiveSummary(check))}</strong></div>
-        <div><span>Desired retain level</span><strong>N-${escapeHtml(String(spbInactiveRetainLevel()))}</strong></div>
+        <div><span>Rollback retention target</span><strong>${escapeHtml(spbInactiveRetainDescription(check))}</strong></div>
         <div><span>Current retain property</span><strong>${escapeHtml(check.currentRetainInactivePatches || "Not set")}</strong></div>
         <div><span>OPatch Heap</span><strong class="mono">${escapeHtml(opatchHeapDisplay(check.opatchHeap))}</strong></div>
         <div><span>OPatch properties</span><strong class="mono">${escapeHtml(check.propertiesPath || "")}</strong></div>
@@ -4010,9 +4027,9 @@ function reportSpbInactiveRows(report) {
   return [
     ["Review status", report.spbInactiveReviewed ? "completed" : "not completed"],
     ["Decision", decision],
-    ["Retain level", report.spbInactiveRetainLevel ? `N-${report.spbInactiveRetainLevel}` : ""],
-    ["Before cleanup", reportText(result.beforeSummary || (check ? check.totalLine : "") || spbInactiveSummary(check))],
-    ["After cleanup", reportText(result.afterSummary || (result.afterCheck ? spbInactiveSummary(result.afterCheck) : ""))],
+    ["Rollback retention", spbInactiveRetainDescription(result.afterCheck || result.beforeCheck || check)],
+    ["Before cleanup", reportText(result.beforeCheck ? spbInactiveSummary(result.beforeCheck) : result.beforeSummary || spbInactiveSummary(check))],
+    ["After cleanup", reportText(result.afterCheck ? spbInactiveSummary(result.afterCheck) : result.afterSummary || "")],
     ["Current RETAIN_INACTIVE_PATCHES", check ? check.currentRetainInactivePatches || "" : ""],
     ["OPatch heap options", (result.opatchHeap && result.opatchHeap.effective) || (check && check.opatchHeap && check.opatchHeap.effective) || report.opatchHeapOptions || ""],
     ["OPatch properties", check && check.propertiesPath ? check.propertiesPath : result.propertiesPath || ""],
