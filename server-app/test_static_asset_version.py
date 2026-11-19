@@ -23,6 +23,21 @@ class StaticAssetVersionTests(unittest.TestCase):
 
         self.assertIn("v{0}".format(version), app_js)
 
+    def test_patchpilot_uses_current_cache_busting_version(self):
+        version = (APP_ROOT / "patchpilot" / "VERSION").read_text(encoding="utf-8").strip()
+        index = (APP_ROOT / "patchpilot" / "index.html").read_text(encoding="utf-8")
+
+        self.assertIn("assets/app.js?v={0}".format(version), index)
+        self.assertIn("assets/styles.css?v={0}".format(version), index)
+
+    def test_non_error_messages_auto_dismiss(self):
+        app_js = (APP_ROOT / "static" / "assets" / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn("const MESSAGE_AUTO_DISMISS_MS=5000;", app_js)
+        self.assertIn('if(state.message.tone!=="error")', app_js)
+        self.assertIn("window.setTimeout", app_js)
+        self.assertIn("window.clearTimeout(messageDismissTimer)", app_js)
+
     def test_recipient_submit_uses_form_attribute_not_shadowed_id_property(self):
         app_js = (APP_ROOT / "static" / "assets" / "app.js").read_text(encoding="utf-8")
         self.assertIn('form.getAttribute("id")!=="recipient-form"', app_js)

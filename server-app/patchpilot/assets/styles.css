@@ -1237,12 +1237,14 @@ p {
   gap: 14px;
   min-width: 0;
   max-width: 100%;
-  overflow: hidden;
+  width: 100%;
 }
 
 .wizard-steps {
   display: grid;
   gap: 8px;
+  min-width: 0;
+  width: 100%;
 }
 
 .wizard-step {
@@ -1252,8 +1254,8 @@ p {
   align-items: center;
   min-height: 56px;
   width: 100%;
+  max-width: 100%;
   min-width: 0;
-  overflow: hidden;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--surface);
@@ -1276,14 +1278,13 @@ p {
 }
 
 .wizard-step strong {
+  min-width: 0;
   overflow-wrap: anywhere;
 }
 
 .wizard-step small {
   justify-self: end;
-  max-width: 70px;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  min-width: 0;
   white-space: nowrap;
   color: var(--ink-muted);
   text-transform: uppercase;
@@ -2254,11 +2255,11 @@ p {
   }
 
   .wizard-layout {
-    grid-template-columns: minmax(220px, 260px) minmax(0, 1fr);
+    grid-template-columns: minmax(280px, 300px) minmax(0, 1fr);
   }
 
   .wizard-layout.is-monitor-hidden {
-    grid-template-columns: minmax(220px, 260px) minmax(0, 1fr);
+    grid-template-columns: minmax(280px, 300px) minmax(0, 1fr);
   }
 
   .monitor-panel {

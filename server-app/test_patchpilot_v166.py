@@ -93,6 +93,10 @@ class PatchPilotV166Tests(unittest.TestCase):
     def test_responsive_layout_keeps_patch_controls_visible(self):
         css = (APP_ROOT / "patchpilot" / "assets" / "styles.css").read_text(encoding="utf-8")
         self.assertIn("@media (max-width: 1500px)", css)
+        self.assertIn("grid-template-columns: minmax(280px, 300px) minmax(0, 1fr);", css)
+        self.assertIn("max-width: 100%;", css)
+        self.assertIn(".wizard-step strong {\n  min-width: 0;", css)
+        self.assertNotIn(".wizard-rail {\n  grid-column: 1;\n  position: relative;\n  z-index: 2;\n  display: grid;\n  gap: 14px;\n  min-width: 0;\n  max-width: 100%;\n  overflow: hidden;", css)
         self.assertIn("grid-column: 2;", css)
         self.assertIn("@media (max-width: 1180px)", css)
         self.assertIn("grid-template-columns: 1fr;", css)
