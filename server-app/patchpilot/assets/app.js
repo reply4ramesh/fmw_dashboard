@@ -1966,6 +1966,8 @@ function renderControls() {
   }
 
   const id = active.id;
+  const hasContextualInactiveAction = id === "spbInactive" && Boolean(document.getElementById("spbInactiveRemoveNowButton"));
+  dom.secondaryActionButton.hidden = hasContextualInactiveAction;
   dom.secondaryActionButton.textContent = secondaryActionLabel(id);
 }
 
@@ -1985,6 +1987,11 @@ function render() {
   renderRail();
   renderStep();
   renderControls();
+  window.requestAnimationFrame(() => {
+    document.querySelectorAll("[data-auto-follow-log]").forEach((element) => {
+      element.scrollTop = element.scrollHeight;
+    });
+  });
 }
 
 function renderStep() {
@@ -3003,6 +3010,7 @@ function renderSpbPrestopStep() {
 }
 
 function renderSpbInactiveStep() {
+  const home = selectedHome();
   const check = state.spbInactiveCheck;
   const result = state.spbInactiveResult;
   const hasInactive = spbInactiveHasPatches(check);
@@ -3183,7 +3191,7 @@ function renderSpbInactiveStep() {
           <span>Confirm the customer approved deleting inactive patches and setting RETAIN_INACTIVE_PATCHES=${escapeHtml(String(spbInactiveRetainLevel()))} for N-${escapeHtml(String(spbInactiveRetainLevel()))} rollback retention.</span>
         </label>
         <div class="inline-actions">
-          <button id="spbInactiveRemoveNowButton" class="button button-primary" type="button" ${state.spbInactiveRemoveConfirmed && backupComplete ? "" : "disabled"}>${dom.dryRunToggle && dom.dryRunToggle.checked ? "Preview Inactive Cleanup" : result && result.status === "failed" ? "Retry Inactive Patch Removal" : "Remove Inactive Patches"}</button>
+          <button id="spbInactiveRemoveNowButton" class="button button-primary" type="button" ${state.spbInactiveRemoveConfirmed && backupComplete && !jobRunning ? "" : "disabled"}>${jobRunning ? "Removing Inactive Patches..." : dom.dryRunToggle && dom.dryRunToggle.checked ? "Preview Inactive Cleanup" : result && result.status === "failed" ? "Retry Inactive Patch Removal" : "Remove Inactive Patches"}</button>
           <span class="field-help">OPatch may require multiple delete and recheck passes when inactive patches span several RU chains.</span>
         </div>
       ` : ""}
@@ -3194,13 +3202,22 @@ function renderSpbInactiveStep() {
           : "Keep inactive patches for this run. I understand SPBAT may take longer and the report will record that cleanup was skipped."}</span>
       </label>
     ` : ""}
-    ${earlyComplete ? `
+    ${!jobRunning && earlyComplete ? `
       <div class="review-box ${downtimeReady ? "is-good" : "is-warning"}">
         <strong>${downtimeReady ? "Ready for SPBAT PreStop" : "Inactive cleanup needs review"}</strong>
         <p>${downtimeReady ? "Inactive patch review is complete for this run." : "Remove inactive patches or explicitly keep them before continuing."}</p>
       </div>
     ` : ""}
-    ${output ? `<pre class="oig-log-preview spb-inactive-output">${escapeHtml(output.slice(-16000))}</pre>` : ""}
+    ${output ? `
+      <section class="inline-job-log">
+        <div class="inline-job-log-heading">
+          <strong>${state.spbInactiveJobKind === "cleanup" ? "Inactive Patch Cleanup Job Output" : "Inactive Patch Review Job Output"}</strong>
+          <code>${escapeHtml(state.spbInactiveJobKind === "cleanup" ? spbInactiveDeleteCommand() : spbInactiveListCommand())}</code>
+          ${state.spbInactiveJobId ? `<span>Job ${escapeHtml(state.spbInactiveJobId)}</span>` : `<span>Target ${escapeHtml(home.oracleHome || "selected ORACLE_HOME")}</span>`}
+        </div>
+        <pre class="oig-log-preview spb-inactive-output" data-auto-follow-log>${escapeHtml(output.slice(-16000))}</pre>
+      </section>
+    ` : ""}
   `;
 }
 
@@ -6680,12 +6697,12 @@ async function runSpbInactivePatchReview() {
       log("Inactive patch deletion was cancelled before OPatch deleteinactivepatches was run.");
       return;
     }
-    setBusy(true, "Removing inactive patches");
-    setStatus("Inactive cleanup running");
-  state.spbInactiveError = "";
-  log(`Inactive patch cleanup sequence approved for ${home.oracleHome} with RETAIN_INACTIVE_PATCHES=${spbInactiveRetainLevel()}.`, "warn");
-  log("PatchPilot will run these steps one after another: set retain property, run deleteinactivepatches, then run cleanup. It will not rerun listorderedinactivepatches after approval.");
-  try {
+    state.spbInactiveSkipConfirmed = false;
+    state.spbInactiveReviewed = false;
+    state.spbInactiveResult = null;
+    state.spbInactiveError = "";
+    state.completed.delete("spbInactive");
+    state.failed.delete("spbInactive");
     state.spbInactiveJobId = "";
     state.spbInactiveJobOutput = "";
     state.spbInactiveJobStatus = "running";
@@ -6694,6 +6711,12 @@ async function runSpbInactivePatchReview() {
     state.spbInactiveSkipAfterCancel = false;
     state.spbInactiveJobStartedAt = nowSeconds();
     state.spbInactiveJobFinishedAt = null;
+    setBusy(true, "Removing inactive patches");
+    setStatus("Inactive cleanup running");
+    log(`Inactive patch cleanup sequence approved for ${home.oracleHome} with RETAIN_INACTIVE_PATCHES=${spbInactiveRetainLevel()}.`, "warn");
+    log("PatchPilot will repeat deleteinactivepatches and recheck until the retained level is reached, then run OPatch cleanup.");
+    render();
+    try {
     const start = await postJson("api/spb/inactive/delete/start", {
       ...connectionPayload(),
       oracleHome: home.oracleHome,

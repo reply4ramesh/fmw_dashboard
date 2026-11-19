@@ -1804,6 +1804,36 @@ p {
   overflow-wrap: anywhere;
 }
 
+.inline-job-log {
+  display: grid;
+  gap: 0;
+  min-width: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: #151311;
+}
+
+.inline-job-log-heading {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.18);
+  background: #24201d;
+  color: #f7f0e7;
+}
+
+.inline-job-log-heading code,
+.inline-job-log-heading span {
+  color: #d8cec2;
+  overflow-wrap: anywhere;
+  font-size: 0.72rem;
+}
+
+.inline-job-log .oig-log-preview {
+  border-radius: 0;
+}
+
 .file-picker {
   display: inline-flex;
   align-items: center;

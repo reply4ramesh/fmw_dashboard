@@ -149,6 +149,12 @@ class PatchPilotV166Tests(unittest.TestCase):
         self.assertIn('id="spbInactiveRemoveNowButton"', javascript)
         self.assertIn("Remove Inactive Patches", javascript)
         self.assertIn("multiple delete and recheck passes", javascript)
+        self.assertIn('dom.secondaryActionButton.hidden = hasContextualInactiveAction;', javascript)
+        self.assertIn('${!jobRunning && earlyComplete ? `', javascript)
+        self.assertIn('state.spbInactiveSkipConfirmed = false;', javascript)
+        self.assertIn('data-auto-follow-log', javascript)
+        self.assertIn('element.scrollTop = element.scrollHeight;', javascript)
+        self.assertIn('Inactive Patch Cleanup Job Output', javascript)
 
 
 if __name__ == "__main__":
