@@ -37,6 +37,9 @@ class StaticAssetVersionTests(unittest.TestCase):
         self.assertIn('if(state.message.tone!=="error")', app_js)
         self.assertIn("window.setTimeout", app_js)
         self.assertIn("window.clearTimeout(messageDismissTimer)", app_js)
+        self.assertIn("expiresAt:messageTone===\"error\"?0:Date.now()+MESSAGE_AUTO_DISMISS_MS", app_js)
+        self.assertIn("if(m&&m.expiresAt&&Date.now()>=m.expiresAt)state.message=null", app_js)
+        self.assertIn('renderUpdateCheckStatus();renderMessage();syncAppModeV156();return;', app_js)
 
     def test_recipient_submit_uses_form_attribute_not_shadowed_id_property(self):
         app_js = (APP_ROOT / "static" / "assets" / "app.js").read_text(encoding="utf-8")

@@ -1524,7 +1524,7 @@ def parse_inactive_output(output):
     inactive_patch_count = sum(chain_counts) if chain_counts else (numbers[0] if len(numbers) >= 1 else None)
     inactive_overlay_count = None if chain_counts else (numbers[1] if len(numbers) >= 2 else None)
     highest_chain_count = max(chain_counts) if chain_counts else None
-    desired_reached = (not has_inactive) or (bool(chain_counts) and max(chain_counts) <= retain_level) or (bool(numbers) and max(numbers) <= retain_level)
+    desired_reached = (not has_inactive) or (bool(chain_counts) and sum(chain_counts) <= retain_level) or (bool(numbers) and numbers[0] <= retain_level)
     if chain_counts and not total_line:
         total_line = "%s inactive patch(es) across %s RU chain(s); highest chain retain count is %s" % (sum(chain_counts), len(chain_counts), highest_chain_count)
     return {
@@ -1952,28 +1952,57 @@ else:
     record("Set RETAIN_INACTIVE_PATCHES=%s in %s" % (retain_level, properties_path))
     if properties_backup:
         record("Backed up opatch.properties to %s" % properties_backup)
-    delete_runs = 1
     delete_command = [opatch, "util", "deleteinactivepatches", "-oh", oracle_home]
-    record("$ printf 'y\\n' | " + command_text(delete_command))
-    record("PatchPilot answered OPatch deleteinactivepatches prompts with y based on the UI confirmation.")
-    return_code, delete_output, delete_error = run_command(delete_command, allow_failure=True, input_text=OPATCH_YES_INPUT)
-    output_parts.append(delete_output)
-    if delete_error:
-        cleanup_error = delete_error
-        failed_command = "printf 'y\\n' | " + command_text(delete_command)
-        failed_return_code = return_code
-        output_parts.append(delete_error)
-    if not cleanup_error:
-        record("OPatch deleteinactivepatches completed; waiting for the utility process to exit before cleanup.")
+    list_command = [opatch, "util", "listorderedinactivepatches", "-oh", oracle_home]
+    initial_count = before.get("inactivePatchCount")
+    max_delete_runs = max(1, min(100, int(initial_count or 25)))
+    after = dict(before)
+    previous_summary = before_summary
+    no_progress_runs = 0
+    while after.get("hasInactive") and not after.get("desiredReached") and delete_runs < max_delete_runs and not cleanup_error:
+        delete_runs += 1
+        record("Inactive patch deletion pass %s of at most %s." % (delete_runs, max_delete_runs))
+        record("$ printf 'y\\n' | " + command_text(delete_command))
+        record("PatchPilot answered OPatch deleteinactivepatches prompts with y based on the UI confirmation.")
+        return_code, delete_output, delete_error = run_command(delete_command, allow_failure=True, input_text=OPATCH_YES_INPUT)
+        output_parts.append(delete_output)
+        if delete_error:
+            cleanup_error = delete_error
+            failed_command = "printf 'y\\n' | " + command_text(delete_command)
+            failed_return_code = return_code
+            output_parts.append(delete_error)
+            break
+        record("OPatch deleteinactivepatches pass %s completed; waiting for the utility process to exit before rechecking." % delete_runs)
         try:
-            wait_for_opatch_utilities_to_clear("OPatch cleanup", timeout_seconds=OPATCH_WAIT_TIMEOUT_SECONDS)
+            wait_for_opatch_utilities_to_clear("inactive patch recheck", timeout_seconds=OPATCH_WAIT_TIMEOUT_SECONDS)
         except Exception as wait_error:
             cleanup_error = str(wait_error)
             failed_command = "wait for deleteinactivepatches to exit"
             record(cleanup_error)
+            break
+        record("$ " + command_text(list_command))
+        recheck_output = run_command(list_command)
+        output_parts.append(recheck_output)
+        after = parse_inactive_output(recheck_output)
+        current_summary = after.get("totalLine") or ("No inactive patches reported" if not after.get("hasInactive") else "Inactive patches reported")
+        record("Inactive patch recheck after pass %s: %s" % (delete_runs, current_summary))
+        if current_summary == previous_summary:
+            no_progress_runs += 1
+        else:
+            no_progress_runs = 0
+        previous_summary = current_summary
+        if no_progress_runs >= 2 and not after.get("desiredReached"):
+            cleanup_error = "OPatch inactive patch count did not change after two delete passes. Review the OPatch output before retrying."
+            failed_command = command_text(list_command)
+            record(cleanup_error)
+            break
+    if not cleanup_error and after.get("hasInactive") and not after.get("desiredReached"):
+        cleanup_error = "Inactive patch cleanup stopped after %s delete pass(es) without reaching RETAIN_INACTIVE_PATCHES=%s." % (delete_runs, retain_level)
+        failed_command = command_text(list_command)
+        record(cleanup_error)
     if not cleanup_error:
         cleanup_command = [opatch, "util", "cleanup", "-oh", oracle_home]
-        record("Starting OPatch cleanup after deleteinactivepatches completed.")
+        record("Starting OPatch cleanup after the retained inactive patch level was verified.")
         record("$ printf 'y\\n' | " + command_text(cleanup_command))
         record("PatchPilot answered OPatch cleanup prompts with y based on the UI confirmation.")
         return_code, cleanup_output, command_error = run_command(cleanup_command, allow_failure=True, input_text=OPATCH_YES_INPUT)
@@ -1984,13 +2013,10 @@ else:
             failed_return_code = return_code
             output_parts.append(command_error)
         else:
-            record("OPatch cleanup completed. Final listorderedinactivepatches recheck skipped because the pre-confirmation review already captured inactive patch details.")
-            after = dict(before)
+            record("OPatch cleanup completed after %s deleteinactivepatches pass(es)." % delete_runs)
             after["currentRetainInactivePatches"] = current_retain_value()
-            after["desiredReached"] = True
             after["status"] = "cleanup-completed"
-            after["output"] = cleanup_output[-50000:]
-            after["totalLine"] = "Inactive patch cleanup completed by OPatch; final list recheck skipped."
+            after["cleanupOutput"] = cleanup_output[-50000:]
     if cleanup_error:
         status = "failed"
     else:

@@ -3182,6 +3182,10 @@ function renderSpbInactiveStep() {
           <input id="spbInactiveRemoveConfirmInput" type="checkbox" ${state.spbInactiveRemoveConfirmed ? "checked" : ""}>
           <span>Confirm the customer approved deleting inactive patches and setting RETAIN_INACTIVE_PATCHES=${escapeHtml(String(spbInactiveRetainLevel()))} for N-${escapeHtml(String(spbInactiveRetainLevel()))} rollback retention.</span>
         </label>
+        <div class="inline-actions">
+          <button id="spbInactiveRemoveNowButton" class="button button-primary" type="button" ${state.spbInactiveRemoveConfirmed && backupComplete ? "" : "disabled"}>${dom.dryRunToggle && dom.dryRunToggle.checked ? "Preview Inactive Cleanup" : result && result.status === "failed" ? "Retry Inactive Patch Removal" : "Remove Inactive Patches"}</button>
+          <span class="field-help">OPatch may require multiple delete and recheck passes when inactive patches span several RU chains.</span>
+        </div>
       ` : ""}
       <label class="toggle-row decision-row">
         <input id="spbInactiveSkipInput" type="checkbox" ${state.spbInactiveSkipConfirmed ? "checked" : ""}>
@@ -4793,6 +4797,10 @@ function bindStepEvents(id) {
         state.failed.delete("spbInactive");
       }
       render();
+    });
+    const removeNowButton = document.getElementById("spbInactiveRemoveNowButton");
+    if (removeNowButton) removeNowButton.addEventListener("click", () => {
+      runSpbInactivePatchReview();
     });
     const skipInput = document.getElementById("spbInactiveSkipInput");
     if (skipInput) skipInput.addEventListener("change", () => {

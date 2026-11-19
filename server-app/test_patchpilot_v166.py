@@ -126,6 +126,30 @@ class PatchPilotV166Tests(unittest.TestCase):
         self.assertIn("preinstall: confirmPreinstall", javascript)
         self.assertIn("PatchPilot does not request, save, or use the OIG schema password", javascript)
 
+    def test_inactive_cleanup_repeats_delete_and_recheck_for_multiple_ru_chains(self):
+        server = app.patchpilot_server
+        request = {
+            "oracleHome": "/opt/oracle/fmw",
+            "retainLevel": 1,
+            "opatchHeapOptions": "-Xmx3072m",
+            "confirmed": True,
+        }
+        check_script = server.build_spb_inactive_check_script(request)
+        cleanup_script = server.build_spb_inactive_delete_script(request)
+
+        self.assertIn("sum(chain_counts) <= retain_level", check_script)
+        self.assertIn('while after.get("hasInactive") and not after.get("desiredReached")', cleanup_script)
+        self.assertIn('run_command(list_command)', cleanup_script)
+        self.assertIn("Inactive patch deletion pass", cleanup_script)
+        self.assertIn("did not change after two delete passes", cleanup_script)
+        compile(check_script, "<patchpilot-inactive-check>", "exec")
+        compile(cleanup_script, "<patchpilot-inactive-cleanup>", "exec")
+
+        javascript = (APP_ROOT / "patchpilot" / "assets" / "app.js").read_text(encoding="utf-8")
+        self.assertIn('id="spbInactiveRemoveNowButton"', javascript)
+        self.assertIn("Remove Inactive Patches", javascript)
+        self.assertIn("multiple delete and recheck passes", javascript)
+
 
 if __name__ == "__main__":
     unittest.main()
