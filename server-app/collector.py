@@ -2133,6 +2133,31 @@ def normalize_weblogic_connect_url(admin_url):
     return "{0}://{1}{2}".format(scheme, host, ":{0}".format(port) if port else "")
 
 
+def weblogic_connect_candidates(admin_url, target):
+    configured = normalize_weblogic_connect_url(admin_url)
+    if not configured:
+        return []
+    candidates = [configured]
+    parsed = urlparse(configured)
+    configured_host = str(parsed.hostname or "").strip().lower().rstrip(".")
+    target_host = str((target or {}).get("host") or "").strip().lower().rstrip(".")
+    configured_short = configured_host.split(".", 1)[0]
+    target_short = target_host.split(".", 1)[0]
+    same_host = configured_host in ("localhost", "127.0.0.1", "::1") or (
+        configured_host
+        and target_host
+        and (configured_host == target_host or configured_short == target_short)
+    )
+    if same_host and configured_host not in ("localhost", "127.0.0.1", "::1"):
+        local = "{0}://127.0.0.1{1}".format(
+            parsed.scheme,
+            ":{0}".format(parsed.port) if parsed.port else "",
+        )
+        if local not in candidates:
+            candidates.append(local)
+    return candidates
+
+
 def parse_weblogic_deployments(text):
     deployments = []
     for raw_line in lines(text):
@@ -4086,9 +4111,20 @@ def run_wlst_script(target, wlst_path, script_body, timeout=180):
 
 
 def build_weblogic_runtime_script(admin_username, admin_password, deployment_connect_url):
+    parsed_connect_url = urlparse(str(deployment_connect_url or ""))
+    local_secure_connection = (
+        str(parsed_connect_url.scheme or "").lower() == "t3s"
+        and str(parsed_connect_url.hostname or "").lower() in ("localhost", "127.0.0.1", "::1")
+    )
+    ssl_setup = (
+        "from java.lang import System\n"
+        "System.setProperty('weblogic.security.SSL.ignoreHostnameVerification','true')\n"
+        if local_secure_connection else ""
+    )
     return (
         "from java.net import InetAddress\n"
-        "connect('" + python_string_literal(admin_username) + "','" + python_string_literal(admin_password) + "','" + python_string_literal(deployment_connect_url) + "')\n"
+        + ssl_setup
+        + "connect('" + python_string_literal(admin_username) + "','" + python_string_literal(admin_password) + "','" + python_string_literal(deployment_connect_url) + "')\n"
         "def clean(value):\n"
         "    if value is None:\n"
         "        return ''\n"
@@ -4509,6 +4545,8 @@ def get_weblogic_metrics(target, environment, opatch_future=None, keystore_futur
     server_inventory_error = None
     server_inventory_command = ""
     deployment_connect_url = normalize_weblogic_connect_url(admin_url)
+    deployment_configured_url = deployment_connect_url
+    deployment_connection_mode = "configured endpoint"
     deployment_command = ""
     deployment_error = None
     deployments = []
@@ -4536,9 +4574,22 @@ def get_weblogic_metrics(target, environment, opatch_future=None, keystore_futur
         wlst_path = "{0}/oracle_common/common/bin/wlst.sh".format(oracle_home.rstrip("/"))
         if callable(progress):
             progress("Starting combined WLST runtime collection from ORACLE_HOME/oracle_common/common/bin/wlst.sh.")
-        combined_script = build_weblogic_runtime_script(admin_username, admin_password, deployment_connect_url)
-        combined_command, combined_result = run_wlst_script(target, wlst_path, combined_script, timeout=210)
-        combined_output = str(combined_result.get("output") or "").strip()
+        combined_command = ""
+        combined_output = ""
+        connect_candidates = weblogic_connect_candidates(admin_url, target) or [deployment_connect_url]
+        for candidate_index, candidate_url in enumerate(connect_candidates):
+            combined_script = build_weblogic_runtime_script(admin_username, admin_password, candidate_url)
+            candidate_command, candidate_result = run_wlst_script(target, wlst_path, combined_script, timeout=210)
+            candidate_output = str(candidate_result.get("output") or "").strip()
+            candidate_inventory = parse_weblogic_server_inventory(candidate_output)
+            combined_command = candidate_command
+            combined_output = candidate_output
+            deployment_connect_url = candidate_url
+            deployment_connection_mode = "remote host loopback" if candidate_index else "configured endpoint"
+            if candidate_inventory or candidate_index == len(connect_candidates) - 1:
+                break
+            if callable(progress):
+                progress("Configured WebLogic endpoint returned no server inventory; retrying from the SSH target through loopback.")
         combined_error = combined_output or "Combined WLST runtime collection failed."
         server_inventory_command = combined_command
         deployment_command = combined_command
@@ -5036,6 +5087,8 @@ def get_weblogic_metrics(target, environment, opatch_future=None, keystore_futur
         "deployments": deployments,
         "deploymentCommand": "{0}/oracle_common/common/bin/wlst.sh".format(oracle_home.rstrip("/")) if oracle_home else "",
         "deploymentConnectUrl": deployment_connect_url,
+        "deploymentConfiguredUrl": deployment_configured_url,
+        "deploymentConnectionMode": deployment_connection_mode,
         "deploymentError": deployment_error,
         "deploymentCount": len(deployments),
         "activeDeploymentCount": len(active_deployments),
@@ -9970,10 +10023,17 @@ def product_metrics_status(product_metrics):
         return "warning"
 
     expected_servers = weblogic.get("expectedServers") or []
-    running_servers = weblogic.get("servers") or []
+    server_inventory = weblogic.get("serverInventory") or []
     missing_servers = weblogic.get("missingServers") or []
-    if expected_servers and not running_servers:
+    inventory_states = [str(item.get("state") or "").strip().upper() for item in server_inventory]
+    known_inventory_states = [state for state in inventory_states if state]
+    running_inventory_states = [state for state in known_inventory_states if state in ("RUNNING", "ADMIN")]
+    if expected_servers and known_inventory_states and not running_inventory_states:
         return "down"
+    if weblogic.get("serverInventoryError"):
+        return "warning"
+    if known_inventory_states and len(running_inventory_states) != len(known_inventory_states):
+        return "warning"
     if missing_servers:
         return "warning"
     if (weblogic.get("inactiveDeploymentCount") or 0) > 0:
@@ -10000,6 +10060,8 @@ def product_metrics_status(product_metrics):
 
     oid = product_metrics.get("oid") or {}
     if oid.get("error"):
+        return "warning"
+    if oid.get("processError"):
         return "warning"
     if oid.get("enabled") and not oid.get("processCount"):
         return "down"
