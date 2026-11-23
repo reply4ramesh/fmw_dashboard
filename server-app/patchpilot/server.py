@@ -4676,6 +4676,30 @@ def unique_csv_numbers(value):
     return result
 
 
+def required_opatch_prerequisite_ids(output):
+    ids = []
+    for value in re.findall(r"requires prerequisite patch\(es\)\s*\[([^\]]+)\]", str(output or ""), re.I):
+        for patch_id in re.findall(r"\b\d{5,}\b", value):
+            if patch_id not in ids:
+                ids.append(patch_id)
+    return ids
+
+
+def opatch_conflict_failure_message(output):
+    text = str(output or "")
+    missing_ids = required_opatch_prerequisite_ids(text)
+    failed = bool(
+        re.search(r"Prereq\s+[\"']?checkConflictAgainstOHWithDetail[\"']?\s+failed", text, re.I)
+        or re.search(r"There are no patches that can be applied now", text, re.I)
+        or missing_ids
+    )
+    if not failed:
+        return ""
+    if missing_ids:
+        return "OPatch conflict prerequisite failed. Apply required prerequisite patch(es) {0} first.".format(", ".join(missing_ids))
+    return "OPatch conflict prerequisite failed. Review the conflict analysis before applying this patch."
+
+
 def build_patch_apply_script(body):
     oracle_home = str(body.get("oracleHome") or "").strip()
     patch_path = str(body.get("patchPath") or "").strip()
@@ -5025,6 +5049,30 @@ def extract_opatch_version(output):
     return match.group(1) if match else ""
 
 
+def required_opatch_prerequisite_ids(output):
+    ids = []
+    for value in re.findall(r"requires prerequisite patch\(es\)\s*\[([^\]]+)\]", str(output or ""), re.I):
+        for patch_id in re.findall(r"\b\d{5,}\b", value):
+            if patch_id not in ids:
+                ids.append(patch_id)
+    return ids
+
+
+def opatch_conflict_failure_message(output):
+    text = str(output or "")
+    missing_ids = required_opatch_prerequisite_ids(text)
+    failed = bool(
+        re.search(r"Prereq\s+[\"']?checkConflictAgainstOHWithDetail[\"']?\s+failed", text, re.I)
+        or re.search(r"There are no patches that can be applied now", text, re.I)
+        or missing_ids
+    )
+    if not failed:
+        return ""
+    if missing_ids:
+        return "OPatch conflict prerequisite failed. Apply required prerequisite patch(es) %s first." % ", ".join(missing_ids)
+    return "OPatch conflict prerequisite failed. Review the conflict analysis before applying this patch."
+
+
 def opatch_log_locations(*outputs):
     logs = []
     for output in outputs:
@@ -5167,11 +5215,16 @@ if already_verified:
 conflict_outputs = []
 conflict_targets = batch_roots if apply_mode == "batch" else [apply_dir]
 conflict_code = 0
+conflict_error = ""
+required_prerequisite_patches = []
 for conflict_target in conflict_targets:
     target_code, target_output = run_command([opatch, "prereq", "CheckConflictAgainstOHWithDetail", "-ph", conflict_target] + debug_args, timeout=1800)
     conflict_outputs.append(target_output)
-    if target_code != 0:
-        conflict_code = target_code
+    target_failure = opatch_conflict_failure_message(target_output)
+    if target_code != 0 or target_failure:
+        conflict_code = target_code or 1
+        conflict_error = target_failure or "OPatch conflict prerequisite failed."
+        required_prerequisite_patches = required_opatch_prerequisite_ids(target_output)
         break
 conflict_output = "\n".join(conflict_outputs)
 if conflict_code != 0:
@@ -5189,7 +5242,8 @@ if conflict_code != 0:
         "applyMode": apply_mode,
         "batchSelection": batch_selection if apply_mode == "batch" else "",
         "inventoryVerified": False,
-        "error": "OPatch conflict prerequisite failed.",
+        "error": conflict_error or "OPatch conflict prerequisite failed.",
+        "requiredPrerequisitePatches": required_prerequisite_patches,
         "conflictOutput": conflict_output[-50000:],
     }
     emit_payload(payload, conflict_output)

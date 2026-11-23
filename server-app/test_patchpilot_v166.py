@@ -119,6 +119,32 @@ class PatchPilotV166Tests(unittest.TestCase):
         self.assertIn("Latest remote message", javascript)
         self.assertIn("The command is running on the target server through SSH", javascript)
 
+    def test_zero_exit_conflict_output_still_blocks_patch_apply(self):
+        server = app.patchpilot_server
+        output = '''
+Prereq "checkConflictAgainstOHWithDetail" failed.
+Interim patch 40162498 requires prerequisite patch(es) [39904932] which are not present in the Oracle Home.
+There are no patches that can be applied now.
+OPatch succeeded.
+'''
+
+        self.assertEqual(server.required_opatch_prerequisite_ids(output), ["39904932"])
+        self.assertEqual(
+            server.opatch_conflict_failure_message(output),
+            "OPatch conflict prerequisite failed. Apply required prerequisite patch(es) 39904932 first.",
+        )
+        self.assertEqual(server.opatch_conflict_failure_message("OPatch succeeded."), "")
+
+        script = server.build_patch_apply_script({
+            "oracleHome": "/opt/oracle/fmw",
+            "patchPath": "/stage/oneoff/40162498",
+            "dryRun": False,
+        })
+        self.assertIn("target_failure = opatch_conflict_failure_message(target_output)", script)
+        self.assertIn('conflict_code = target_code or 1', script)
+        self.assertIn('"requiredPrerequisitePatches": required_prerequisite_patches', script)
+        compile(script, "<patchpilot-zero-exit-conflict>", "exec")
+
     def test_batch_napply_rejects_invalid_or_missing_selection(self):
         server = app.patchpilot_server
         with self.assertRaisesRegex(ValueError, "numeric"):
