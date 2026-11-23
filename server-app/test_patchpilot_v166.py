@@ -108,6 +108,7 @@ class PatchPilotV166Tests(unittest.TestCase):
         })
 
         self.assertIn("select.select([proc.stdout], [], [], 2.0)", script)
+        self.assertIn("import select", script)
         self.assertIn("PatchPilot activity: %s is still running", script)
         self.assertIn("[OPatch log] %s", script)
         self.assertIn("CheckConflictAgainstOHWithDetail", script)

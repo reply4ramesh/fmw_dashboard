@@ -4713,6 +4713,7 @@ def build_patch_apply_script(body):
 import json
 import os
 import re
+import select
 import subprocess
 import sys
 import time
