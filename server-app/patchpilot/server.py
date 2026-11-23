@@ -3873,6 +3873,7 @@ def build_shutdown_stop_script(body):
 import json
 import os
 import re
+import select
 import subprocess
 import sys
 import time
@@ -4747,6 +4748,60 @@ def unique(items):
     return result
 
 
+def command_activity_label(command):
+    text = " ".join(str(item) for item in command)
+    if "CheckConflictAgainstOHWithDetail" in text:
+        return "OPatch conflict check"
+    if "lsinventory" in text:
+        return "OPatch inventory"
+    if " apply" in " %s" % text or " napply" in " %s" % text:
+        return "OPatch patch application"
+    return os.path.basename(str(command[0] if command else "command"))
+
+
+def opatch_log_from_output(output):
+    matches = re.findall(r"Log file location\s*:\s*([^\r\n]+)", "".join(output), re.I)
+    return matches[-1].strip() if matches else ""
+
+
+def latest_opatch_log(started):
+    log_dir = os.path.join(oracle_home, "cfgtoollogs", "opatch")
+    try:
+        candidates = [
+            os.path.join(log_dir, name)
+            for name in os.listdir(log_dir)
+            if name.lower().endswith(".log") and os.path.isfile(os.path.join(log_dir, name))
+        ]
+        recent = [path for path in candidates if os.path.getmtime(path) >= started - 10]
+        return max(recent, key=os.path.getmtime) if recent else ""
+    except Exception:
+        return ""
+
+
+def emit_log_updates(log_path, offset):
+    if not log_path or not os.path.isfile(log_path):
+        return offset
+    try:
+        size = os.path.getsize(log_path)
+        if offset is None:
+            offset = max(0, size - 16384)
+        elif size < offset:
+            offset = 0
+        if size <= offset:
+            return offset
+        with open(log_path, "rb") as handle:
+            handle.seek(offset)
+            data = handle.read(min(65536, size - offset))
+            next_offset = handle.tell()
+        for log_line in data.decode("utf-8", "replace").splitlines():
+            if log_line.strip():
+                emit("[OPatch log] %s" % log_line)
+        return next_offset
+    except Exception as error:
+        emit("PatchPilot could not read the active OPatch log: %s" % error)
+        return offset
+
+
 def run_command(command, cwd=None, timeout=7200):
     emit("$ %s%s" % ("cd %s && " % cwd if cwd else "", " ".join(command)))
     proc = subprocess.Popen(
@@ -4760,16 +4815,43 @@ def run_command(command, cwd=None, timeout=7200):
     )
     output = []
     started = time.time()
+    last_heartbeat = started
+    active_log = ""
+    active_log_offset = None
+    activity_label = command_activity_label(command)
     while True:
-        line = proc.stdout.readline() if proc.stdout else ""
+        ready = []
+        if proc.stdout:
+            ready, _, _ = select.select([proc.stdout], [], [], 2.0)
+        line = proc.stdout.readline() if ready and proc.stdout else ""
         if line:
             output.append(line)
             emit(line.rstrip("\n"))
+            reported_log = opatch_log_from_output(output)
+            if reported_log and reported_log != active_log:
+                active_log = reported_log
+                active_log_offset = None
         elif proc.poll() is not None:
             break
-        if time.time() - started > timeout:
+        now = time.time()
+        if now - started > timeout:
             proc.kill()
             raise RuntimeError("Command timed out after %ss: %s" % (timeout, " ".join(command)))
+        if now - last_heartbeat >= 10:
+            if not active_log:
+                active_log = latest_opatch_log(started)
+            active_log_offset = emit_log_updates(active_log, active_log_offset)
+            elapsed = int(now - started)
+            emit(
+                "PatchPilot activity: %s is still running; elapsed %dm %02ds%s."
+                % (
+                    activity_label,
+                    elapsed // 60,
+                    elapsed % 60,
+                    "; monitoring %s" % active_log if active_log else "; waiting for OPatch to publish its log path",
+                )
+            )
+            last_heartbeat = now
     if proc.stdout:
         rest = proc.stdout.read()
         if rest:

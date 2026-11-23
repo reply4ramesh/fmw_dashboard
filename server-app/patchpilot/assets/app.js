@@ -142,6 +142,7 @@ const state = {
   patchApplyOutput: "",
   patchProgressPhase: "idle",
   patchStartedAt: 0,
+  patchLastActivityAt: 0,
   opatchDebugUsed: false,
   postinstallConfirmed: false,
   postinstallDone: false,
@@ -1000,6 +1001,7 @@ function resetPatchApplyState() {
   state.patchApplyOutput = "";
   state.patchProgressPhase = "idle";
   state.patchStartedAt = 0;
+  state.patchLastActivityAt = 0;
   state.opatchDebugUsed = false;
   state.rollbackInProgress = false;
   state.rollbackDone = false;
@@ -3453,6 +3455,10 @@ function renderApplyStep() {
   const estimate = patchDurationEstimate();
   const progressPhase = patchProgressLabel();
   const applyLabel = patchApplyCommandLabel();
+  const applyRunning = Boolean(state.patchStartedAt && !result && !failed && state.running);
+  const elapsedSeconds = state.patchStartedAt ? Math.max(0, (Date.now() - state.patchStartedAt) / 1000) : 0;
+  const activitySeconds = state.patchLastActivityAt ? Math.max(0, (Date.now() - state.patchLastActivityAt) / 1000) : 0;
+  const latestRemoteMessage = String(state.patchApplyOutput || "").split(/\r?\n/).filter((line) => line.trim()).slice(-1)[0] || "Waiting for remote OPatch output";
   const statusClass = state.rollbackDone ? "is-good" : state.patchApplied ? "is-good" : failed ? "is-danger" : dryRunDone ? dryRunStillEnabled ? "is-warning" : "is-good" : "";
   const title = state.rollbackDone
     ? rollback && rollback.alreadyRolledBack ? "Patch already rolled back and verified" : "Patch rolled back and verified"
@@ -3462,7 +3468,7 @@ function renderApplyStep() {
       ? "Patch apply failed"
       : dryRunDone
         ? dryRunStillEnabled ? "Dry-run completed; patch not applied" : "Dry-run passed; ready to apply"
-        : "Ready for conflict check and apply";
+        : applyRunning ? progressPhase : "Ready for conflict check and apply";
   const message = state.rollbackDone
     ? rollback && rollback.alreadyRolledBack
       ? "PatchPilot confirmed the patch id is not present in OPatch inventory for the selected ORACLE_HOME."
@@ -3477,7 +3483,9 @@ function renderApplyStep() {
         ? dryRunStillEnabled
           ? `Conflict checks passed, but Dry-run commands first is checked. Uncheck dry-run and click Apply Patch when you are ready to run ${applyLabel}.`
           : "Conflict check passed and Dry-run commands first is now unchecked. Click Apply Patch to apply this patch to the selected ORACLE_HOME."
-        : `PatchPilot checks every selected patch for conflicts, runs ${applyLabel} when dry-run is off, then verifies all expected patch IDs in lsinventory before marking this complete.`;
+        : applyRunning
+          ? `The command is running on the target server through SSH. PatchPilot polls the process and active OPatch log; a quiet inventory scan can legitimately take several minutes.`
+          : `PatchPilot checks every selected patch for conflicts, runs ${applyLabel} when dry-run is off, then verifies all expected patch IDs in lsinventory before marking this complete.`;
   return `
     <div class="step-heading">
       <p class="page-breadcrumb">Patch Execution</p>
@@ -3507,6 +3515,20 @@ function renderApplyStep() {
         <span>Estimate basis</span>
         <strong>${escapeHtml(estimate.basis)}</strong>
       </div>
+      ${state.patchStartedAt ? `
+        <div>
+          <span>Elapsed time</span>
+          <strong>${escapeHtml(formatDuration(elapsedSeconds))}</strong>
+        </div>
+        <div>
+          <span>Latest activity</span>
+          <strong>${escapeHtml(state.patchLastActivityAt ? `${formatDuration(activitySeconds)} ago` : "Waiting for first response")}</strong>
+        </div>
+        <div class="detail-span-2">
+          <span>Latest remote message</span>
+          <strong class="mono">${escapeHtml(latestRemoteMessage)}</strong>
+        </div>
+      ` : ""}
     </div>
     <div class="review-box ${statusClass}">
       <strong>${escapeHtml(title)}</strong>
@@ -7225,6 +7247,7 @@ async function applyPatch() {
   setStatus(dryRun ? "Apply dry-run" : "Patching");
   state.progress = 0;
   state.patchStartedAt = Date.now();
+  state.patchLastActivityAt = Date.now();
   state.patchProgressPhase = "idle";
   setPatchProgressPhase("preparing");
   state.opatchDebugUsed = opatchDebugEnabled();
@@ -7289,6 +7312,7 @@ async function applyPatch() {
       } else if (output !== state.patchApplyOutput) {
         delta = output;
       }
+      if (delta.trim()) state.patchLastActivityAt = Date.now();
       const previousOpatchLog = currentOpatchLogLocation();
       state.patchApplyOutput = output;
       logCommandTail(delta, dryRun ? `${applyLabel} dry-run` : applyLabel);
@@ -8218,6 +8242,7 @@ function resetRun() {
   state.patchApplyOutput = "";
   state.patchProgressPhase = "idle";
   state.patchStartedAt = 0;
+  state.patchLastActivityAt = 0;
   state.opatchDebugUsed = false;
   state.postinstallConfirmed = false;
   state.postinstallDone = false;

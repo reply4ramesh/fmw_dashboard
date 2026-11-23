@@ -1626,6 +1626,10 @@ p {
   background: var(--oracle-blue-soft);
 }
 
+.patch-runtime-grid .detail-span-2 {
+  grid-column: 1 / -1;
+}
+
 .backup-result-list {
   display: grid;
   gap: 12px;

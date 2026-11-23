@@ -99,6 +99,25 @@ class PatchPilotV166Tests(unittest.TestCase):
         self.assertIn('missing_patch_ids = [patch_id for patch_id in verification_patch_ids', file_script)
         compile(file_script, "<patchpilot-napply-file>", "exec")
 
+    def test_patch_apply_streams_heartbeats_and_opatch_log_updates(self):
+        server = app.patchpilot_server
+        script = server.build_patch_apply_script({
+            "oracleHome": "/opt/oracle/fmw",
+            "patchPath": "/stage/oneoff/40040980",
+            "applyMode": "single",
+        })
+
+        self.assertIn("select.select([proc.stdout], [], [], 2.0)", script)
+        self.assertIn("PatchPilot activity: %s is still running", script)
+        self.assertIn("[OPatch log] %s", script)
+        self.assertIn("CheckConflictAgainstOHWithDetail", script)
+        compile(script, "<patchpilot-live-opatch-progress>", "exec")
+
+        javascript = (APP_ROOT / "patchpilot" / "assets" / "app.js").read_text(encoding="utf-8")
+        self.assertIn("patchLastActivityAt", javascript)
+        self.assertIn("Latest remote message", javascript)
+        self.assertIn("The command is running on the target server through SSH", javascript)
+
     def test_batch_napply_rejects_invalid_or_missing_selection(self):
         server = app.patchpilot_server
         with self.assertRaisesRegex(ValueError, "numeric"):
