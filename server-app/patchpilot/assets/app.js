@@ -142,6 +142,7 @@ const state = {
   patchApplyOutput: "",
   patchProgressPhase: "idle",
   patchStartedAt: 0,
+  patchPhaseStartedAt: 0,
   patchLastActivityAt: 0,
   opatchDebugUsed: false,
   postinstallConfirmed: false,
@@ -1001,6 +1002,7 @@ function resetPatchApplyState() {
   state.patchApplyOutput = "";
   state.patchProgressPhase = "idle";
   state.patchStartedAt = 0;
+  state.patchPhaseStartedAt = 0;
   state.patchLastActivityAt = 0;
   state.opatchDebugUsed = false;
   state.rollbackInProgress = false;
@@ -1483,22 +1485,30 @@ function setPatchProgressPhase(phase) {
   const next = PATCH_PROGRESS_PHASES[phase] || PATCH_PROGRESS_PHASES.preparing;
   const current = PATCH_PROGRESS_PHASES[state.patchProgressPhase] || PATCH_PROGRESS_PHASES.idle;
   if (next.percent >= current.percent || phase === "failed" || phase === "complete" || phase === "dryRunComplete") {
+    if (state.patchProgressPhase !== phase) state.patchPhaseStartedAt = Date.now();
     state.patchProgressPhase = phase;
   }
   state.progress = Math.max(state.progress || 0, next.percent);
 }
 
+function lastOutputCommandIndex(text, expression) {
+  let lastIndex = -1;
+  for (const match of String(text || "").matchAll(expression)) lastIndex = match.index;
+  return lastIndex;
+}
+
 function updatePatchProgressFromOutput(output, dryRun) {
   const text = String(output || "");
-  const lower = text.toLowerCase();
-  const applyIndex = lower.lastIndexOf("opatch apply");
-  const inventoryIndex = lower.lastIndexOf("opatch lsinventory");
+  const applyIndex = lastOutputCommandIndex(text, /^\$\s+(?:cd\s+.+?\s+&&\s+)?\S*opatch\s+(?:apply|napply)\b/gim);
+  const inventoryIndex = lastOutputCommandIndex(text, /^\$\s+\S*opatch\s+lsinventory\b/gim);
+  const versionIndex = lastOutputCommandIndex(text, /^\$\s+\S*opatch\s+version\b/gim);
+  const conflictIndex = lastOutputCommandIndex(text, /^\$\s+\S*opatch\s+prereq\s+CheckConflictAgainstOHWithDetail\b/gim);
   if (/PatchPilot OPatch run started|Resolved OPatch apply directory/i.test(text)) setPatchProgressPhase("preparing");
-  if (/\$ .*opatch\s+version|Oracle Interim Patch Installer version|OPatch Version/i.test(text)) setPatchProgressPhase("version");
+  if (versionIndex >= 0) setPatchProgressPhase("version");
   if (inventoryIndex >= 0 && (applyIndex < 0 || inventoryIndex < applyIndex)) setPatchProgressPhase("inventoryBefore");
-  if (/CheckConflictAgainstOHWithDetail|checkconflictagainstohwithdetail/i.test(text)) setPatchProgressPhase("conflict");
+  if (conflictIndex >= 0) setPatchProgressPhase("conflict");
   if (dryRun) return;
-  if (applyIndex >= 0 || /Applying patch/i.test(text)) setPatchProgressPhase("apply");
+  if (applyIndex >= 0) setPatchProgressPhase("apply");
   if (applyIndex >= 0 && inventoryIndex > applyIndex) setPatchProgressPhase("inventoryAfter");
 }
 
@@ -3457,6 +3467,7 @@ function renderApplyStep() {
   const applyLabel = patchApplyCommandLabel();
   const applyRunning = Boolean(state.patchStartedAt && !result && !failed && state.running);
   const elapsedSeconds = state.patchStartedAt ? Math.max(0, (Date.now() - state.patchStartedAt) / 1000) : 0;
+  const phaseElapsedSeconds = state.patchPhaseStartedAt ? Math.max(0, (Date.now() - state.patchPhaseStartedAt) / 1000) : 0;
   const activitySeconds = state.patchLastActivityAt ? Math.max(0, (Date.now() - state.patchLastActivityAt) / 1000) : 0;
   const latestRemoteMessage = String(state.patchApplyOutput || "").split(/\r?\n/).filter((line) => line.trim()).slice(-1)[0] || "Waiting for remote OPatch output";
   const statusClass = state.rollbackDone ? "is-good" : state.patchApplied ? "is-good" : failed ? "is-danger" : dryRunDone ? dryRunStillEnabled ? "is-warning" : "is-good" : "";
@@ -3517,8 +3528,12 @@ function renderApplyStep() {
       </div>
       ${state.patchStartedAt ? `
         <div>
-          <span>Elapsed time</span>
+          <span>Total elapsed time</span>
           <strong>${escapeHtml(formatDuration(elapsedSeconds))}</strong>
+        </div>
+        <div>
+          <span>Current phase elapsed</span>
+          <strong>${escapeHtml(formatDuration(phaseElapsedSeconds))}</strong>
         </div>
         <div>
           <span>Latest activity</span>
@@ -7247,6 +7262,7 @@ async function applyPatch() {
   setStatus(dryRun ? "Apply dry-run" : "Patching");
   state.progress = 0;
   state.patchStartedAt = Date.now();
+  state.patchPhaseStartedAt = Date.now();
   state.patchLastActivityAt = Date.now();
   state.patchProgressPhase = "idle";
   setPatchProgressPhase("preparing");
@@ -8242,6 +8258,7 @@ function resetRun() {
   state.patchApplyOutput = "";
   state.patchProgressPhase = "idle";
   state.patchStartedAt = 0;
+  state.patchPhaseStartedAt = 0;
   state.patchLastActivityAt = 0;
   state.opatchDebugUsed = false;
   state.postinstallConfirmed = false;

@@ -111,6 +111,8 @@ class PatchPilotV166Tests(unittest.TestCase):
         self.assertIn("import select", script)
         self.assertIn("PatchPilot activity: %s is still running", script)
         self.assertIn("[OPatch log] %s", script)
+        self.assertIn("File comparison is active", script)
+        self.assertIn("complete details remain in %s", script)
         self.assertIn("CheckConflictAgainstOHWithDetail", script)
         compile(script, "<patchpilot-live-opatch-progress>", "exec")
 
@@ -118,6 +120,9 @@ class PatchPilotV166Tests(unittest.TestCase):
         self.assertIn("patchLastActivityAt", javascript)
         self.assertIn("Latest remote message", javascript)
         self.assertIn("The command is running on the target server through SSH", javascript)
+        self.assertIn("lastOutputCommandIndex", javascript)
+        self.assertIn("Current phase elapsed", javascript)
+        self.assertNotIn('lower.lastIndexOf("opatch lsinventory")', javascript)
 
     def test_zero_exit_conflict_output_still_blocks_patch_apply(self):
         server = app.patchpilot_server

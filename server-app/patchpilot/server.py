@@ -4814,14 +4814,31 @@ def emit_log_updates(log_path, offset):
             offset = 0
         if size <= offset:
             return offset
+        available = size - offset
+        skipped_bytes = 0
+        if available > 16384:
+            skipped_bytes = available - 16384
+            offset = size - 16384
         with open(log_path, "rb") as handle:
             handle.seek(offset)
-            data = handle.read(min(65536, size - offset))
-            next_offset = handle.tell()
-        for log_line in data.decode("utf-8", "replace").splitlines():
-            if log_line.strip():
-                emit("[OPatch log] %s" % log_line)
-        return next_offset
+            data = handle.read(size - offset)
+        lines = [line for line in data.decode("utf-8", "replace").splitlines() if line.strip()]
+        repetitive = [line for line in lines if "[OPSR-TIME] Number of files" in line]
+        useful = [line for line in lines if "[OPSR-TIME] Number of files" not in line]
+        if skipped_bytes:
+            emit("[OPatch log] %d KB of repetitive diagnostic output skipped; complete details remain in %s." % (max(1, skipped_bytes // 1024), log_path))
+        if repetitive:
+            file_counts = [int(value) for value in re.findall(r"Number of files[^:]*:\s*(\d+)", "\n".join(repetitive), re.I)]
+            emit(
+                "[OPatch log] File comparison is active: %d file-count update(s)%s."
+                % (len(repetitive), "; largest set %d files" % max(file_counts) if file_counts else "")
+            )
+        if len(useful) > 24:
+            emit("[OPatch log] %d earlier detail line(s) suppressed; showing the latest 24." % (len(useful) - 24))
+            useful = useful[-24:]
+        for log_line in useful:
+            emit("[OPatch log] %s" % log_line)
+        return size
     except Exception as error:
         emit("PatchPilot could not read the active OPatch log: %s" % error)
         return offset
