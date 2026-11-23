@@ -1500,7 +1500,7 @@ function lastOutputCommandIndex(text, expression) {
 function updatePatchProgressFromOutput(output, dryRun) {
   const text = String(output || "");
   const applyIndex = lastOutputCommandIndex(text, /^\$\s+(?:cd\s+.+?\s+&&\s+)?\S*opatch\s+(?:apply|napply)\b/gim);
-  const inventoryIndex = lastOutputCommandIndex(text, /^\$\s+\S*opatch\s+lsinventory\b/gim);
+  const inventoryIndex = lastOutputCommandIndex(text, /^\$\s+\S*opatch\s+(?:lspatches|lsinventory)\b/gim);
   const versionIndex = lastOutputCommandIndex(text, /^\$\s+\S*opatch\s+version\b/gim);
   const conflictIndex = lastOutputCommandIndex(text, /^\$\s+\S*opatch\s+prereq\s+CheckConflictAgainstOHWithDetail\b/gim);
   if (/PatchPilot OPatch run started|Resolved OPatch apply directory/i.test(text)) setPatchProgressPhase("preparing");
@@ -1799,6 +1799,7 @@ function commandPreview(options = {}) {
   const analysis = state.readmeAnalysis || analyzeReadme(state.readmeText);
   const patchApplyDir = state.patchResult && state.patchResult.applyDir ? state.patchResult.applyDir : state.form.patchPath;
   const debugArgs = typeof options.debug === "boolean" ? (options.debug ? " -verbose -debug" : "") : opatchDebugArgsText();
+  const dryRun = typeof options.dryRun === "boolean" ? options.dryRun : Boolean(dom.dryRunToggle && dom.dryRunToggle.checked);
   if (isStackPatchBundle()) {
     const inactivePatchCommands = [
       "Stop-for-backup gate must pass before file-system tar backups",
@@ -1834,24 +1835,27 @@ function commandPreview(options = {}) {
     return commands;
   }
   if (isBatchNapply()) {
-    return [
+    const commands = [
       `cd ${state.form.patchPath}`,
       opatchHeapExportCommand(),
       `${home.oracleHome}/OPatch/opatch version`,
-      "Run CheckConflictAgainstOHWithDetail for every selected patch directory",
-      batchNapplyCommand(home, debugArgs),
-      `${home.oracleHome}/OPatch/opatch lsinventory`
+      `${home.oracleHome}/OPatch/opatch lspatches`,
+      `Fallback only when needed: ${home.oracleHome}/OPatch/opatch lsinventory`
     ];
+    if (dryRun) commands.push("Run CheckConflictAgainstOHWithDetail for every selected patch directory");
+    else commands.push("Duplicate standalone conflict scan skipped; OPatch napply performs its own prerequisite checks", batchNapplyCommand(home, debugArgs), `${home.oracleHome}/OPatch/opatch lspatches`, `Fallback only when needed: ${home.oracleHome}/OPatch/opatch lsinventory`);
+    return commands;
   }
-  return [
+  const commands = [
     `cd ${patchApplyDir}`,
     opatchHeapExportCommand(),
     `${home.oracleHome}/OPatch/opatch version`,
-    `${home.oracleHome}/OPatch/opatch prereq CheckConflictAgainstOHWithDetail -ph ./${debugArgs}`,
-    `${home.oracleHome}/OPatch/opatch apply -silent${debugArgs}`,
-    `${home.oracleHome}/OPatch/opatch lsinventory`,
-    analysis.rollbackCommand.replace("$ORACLE_HOME", home.oracleHome)
+    `${home.oracleHome}/OPatch/opatch lspatches`,
+    `Fallback only when needed: ${home.oracleHome}/OPatch/opatch lsinventory`
   ];
+  if (dryRun) commands.push(`${home.oracleHome}/OPatch/opatch prereq CheckConflictAgainstOHWithDetail -ph ./${debugArgs}`);
+  else commands.push("Duplicate standalone conflict scan skipped; OPatch apply performs its own prerequisite checks", `${home.oracleHome}/OPatch/opatch apply -silent${debugArgs}`, `${home.oracleHome}/OPatch/opatch lspatches`, `Fallback only when needed: ${home.oracleHome}/OPatch/opatch lsinventory`, analysis.rollbackCommand.replace("$ORACLE_HOME", home.oracleHome));
+  return commands;
 }
 
 function stepStatus(stepId) {
@@ -3483,11 +3487,11 @@ function renderApplyStep() {
   const message = state.rollbackDone
     ? rollback && rollback.alreadyRolledBack
       ? "PatchPilot confirmed the patch id is not present in OPatch inventory for the selected ORACLE_HOME."
-      : "OPatch rollback completed and lsinventory confirmed the patch id is no longer present."
+      : "OPatch rollback completed and inventory verification confirmed the patch id is no longer present."
     : state.patchApplied
     ? result && result.alreadyApplied
       ? `PatchPilot found every expected patch id in OPatch inventory for the selected ORACLE_HOME, so ${applyLabel} was skipped.`
-      : `${applyLabel} completed and lsinventory confirmed every expected patch id in the selected ORACLE_HOME.`
+      : `${applyLabel} completed and inventory verification confirmed every expected patch id in the selected ORACLE_HOME.`
     : failed
       ? (result && result.error) || "Review the OPatch output before retrying."
       : dryRunDone
@@ -3496,7 +3500,7 @@ function renderApplyStep() {
           : "Conflict check passed and Dry-run commands first is now unchecked. Click Apply Patch to apply this patch to the selected ORACLE_HOME."
         : applyRunning
           ? `The command is running on the target server through SSH. PatchPilot polls the process and active OPatch log; a quiet inventory scan can legitimately take several minutes.`
-          : `PatchPilot checks every selected patch for conflicts, runs ${applyLabel} when dry-run is off, then verifies all expected patch IDs in lsinventory before marking this complete.`;
+          : `Dry-run performs standalone conflict analysis. Real apply avoids repeating that expensive scan because OPatch enforces its own prerequisite checks, then PatchPilot verifies every expected patch ID in inventory.`;
   return `
     <div class="step-heading">
       <p class="page-breadcrumb">Patch Execution</p>
@@ -3572,9 +3576,22 @@ function renderApplyStep() {
         <div><span>Verbose/debug</span><strong>${state.opatchDebugUsed || result.debug ? "Enabled" : "Disabled"}</strong></div>
         <div><span>Patch ids expected</span><strong>${escapeHtml((result.targetPatchIds || result.patchIds || []).join(", ") || result.primaryPatchId || "not discovered")}</strong></div>
         <div><span>Inventory verified</span><strong>${result.inventoryVerified ? "Yes" : "No"}</strong></div>
+        <div><span>Inventory command</span><strong>${escapeHtml(result.inventorySource || "not recorded")}</strong></div>
         ${(result.foundPatchIds || []).length ? `<div><span>Patch ids found</span><strong>${escapeHtml(result.foundPatchIds.join(", "))}</strong></div>` : ""}
         ${(result.missingPatchIds || []).length ? `<div><span>Patch ids missing</span><strong>${escapeHtml(result.missingPatchIds.join(", "))}</strong></div>` : ""}
       </div>
+      ${(result.commandTimings || []).length ? `
+        <div class="analysis-list">
+          <h3>Command Performance</h3>
+          ${(result.commandTimings || []).map((timing) => `
+            <div>
+              <span>${escapeHtml(timing.label || "Command")}</span>
+              <strong>${escapeHtml(formatDuration(Number(timing.durationSeconds) || 0))} · ${escapeHtml(timing.status || "unknown")}</strong>
+              <code>${escapeHtml(timing.command || "")}</code>
+            </div>
+          `).join("")}
+        </div>
+      ` : ""}
     ` : ""}
     ${rollback ? `
       <div class="detail-grid">

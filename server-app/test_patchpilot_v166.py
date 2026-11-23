@@ -150,6 +150,36 @@ OPatch succeeded.
         self.assertIn('"requiredPrerequisitePatches": required_prerequisite_patches', script)
         compile(script, "<patchpilot-zero-exit-conflict>", "exec")
 
+    def test_real_apply_uses_fast_inventory_and_avoids_duplicate_conflict_scan(self):
+        server = app.patchpilot_server
+        real_script = server.build_patch_apply_script({
+            "oracleHome": "/opt/oracle/fmw",
+            "patchPath": "/stage/oneoff/40105072",
+            "dryRun": False,
+        })
+        dry_run_script = server.build_patch_apply_script({
+            "oracleHome": "/opt/oracle/fmw",
+            "patchPath": "/stage/oneoff/40105072",
+            "dryRun": True,
+        })
+
+        self.assertIn('run_fast_inventory("before apply")', real_script)
+        self.assertIn('[opatch, "lspatches"]', real_script)
+        self.assertIn("falling back to full lsinventory", real_script)
+        self.assertIn("Fast lspatches verification did not confirm every expected patch id", real_script)
+        self.assertIn("skipping the duplicate standalone conflict scan", real_script)
+        self.assertIn("if dry_run:", real_script)
+        self.assertIn("CheckConflictAgainstOHWithDetail", dry_run_script)
+        self.assertIn('apply_semantic_error = opatch_conflict_failure_message(apply_output)', real_script)
+        self.assertIn('payload["commandTimings"] = list(command_timings)', real_script)
+        compile(real_script, "<patchpilot-optimized-real-apply>", "exec")
+        compile(dry_run_script, "<patchpilot-optimized-dry-run>", "exec")
+
+        javascript = (APP_ROOT / "patchpilot" / "assets" / "app.js").read_text(encoding="utf-8")
+        self.assertIn("Duplicate standalone conflict scan skipped", javascript)
+        self.assertIn("Command Performance", javascript)
+        self.assertIn("Inventory command", javascript)
+
     def test_batch_napply_rejects_invalid_or_missing_selection(self):
         server = app.patchpilot_server
         with self.assertRaisesRegex(ValueError, "numeric"):

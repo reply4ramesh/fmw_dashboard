@@ -4755,6 +4755,7 @@ opatch = os.path.join(oracle_home, "OPatch", "opatch")
 debug_args = ["-verbose", "-debug"] if debug else []
 __PATCHSCOPE_OPATCH_HEAP_HELPER__
 opatch_heap = configure_opatch_heap(request.get("opatchHeapOptions"))
+command_timings = []
 
 
 def emit(message):
@@ -4777,7 +4778,7 @@ def command_activity_label(command):
     text = " ".join(str(item) for item in command)
     if "CheckConflictAgainstOHWithDetail" in text:
         return "OPatch conflict check"
-    if "lsinventory" in text:
+    if "lsinventory" in text or "lspatches" in text:
         return "OPatch inventory"
     if " apply" in " %s" % text or " napply" in " %s" % text:
         return "OPatch patch application"
@@ -4901,7 +4902,16 @@ def run_command(command, cwd=None, timeout=7200):
             for rest_line in rest.splitlines():
                 emit(rest_line)
         proc.stdout.close()
-    return proc.wait(), "".join(output)
+    return_code = proc.wait()
+    duration_seconds = round(time.time() - started, 1)
+    command_timings.append({
+        "label": activity_label,
+        "command": " ".join(command),
+        "durationSeconds": duration_seconds,
+        "status": "succeeded" if return_code == 0 else "failed",
+    })
+    emit("PatchPilot timing: %s completed in %.1fs with return code %s." % (activity_label, duration_seconds, return_code))
+    return return_code, "".join(output)
 
 
 def read_small(path, limit=256 * 1024):
@@ -5090,6 +5100,17 @@ def opatch_conflict_failure_message(output):
     return "OPatch conflict prerequisite failed. Review the conflict analysis before applying this patch."
 
 
+def run_fast_inventory(stage):
+    emit("PatchPilot optimized inventory (%s): trying opatch lspatches first." % stage)
+    code, output = run_command([opatch, "lspatches"], timeout=600)
+    source = "lspatches"
+    if code != 0:
+        emit("opatch lspatches was unavailable or failed; falling back to full lsinventory.")
+        code, output = run_command([opatch, "lsinventory"], timeout=900)
+        source = "lsinventory"
+    return code, output, source
+
+
 def opatch_log_locations(*outputs):
     logs = []
     for output in outputs:
@@ -5108,6 +5129,7 @@ def attach_opatch_logs(payload, *outputs):
 def emit_payload(payload, *outputs):
     payload["debug"] = debug
     payload["opatchHeap"] = opatch_heap
+    payload["commandTimings"] = list(command_timings)
     attach_opatch_logs(payload, *outputs)
     print("__PATCHSCOPE_JSON_START__")
     print(json.dumps(payload))
@@ -5179,7 +5201,7 @@ if version_code != 0:
     emit_payload(payload, version_output)
     raise SystemExit(0)
 
-before_code, before_inventory = run_command([opatch, "lsinventory"], timeout=900)
+before_code, before_inventory, before_inventory_source = run_fast_inventory("before apply")
 if before_code != 0:
     payload = {
         "status": "failed",
@@ -5193,7 +5215,8 @@ if before_code != 0:
         "primaryPatchId": primary_patch_id,
         "opatchVersion": opatch_version,
         "inventoryVerified": False,
-        "error": "OPatch lsinventory failed before apply.",
+        "error": "OPatch inventory failed before apply.",
+        "inventorySource": before_inventory_source,
         "inventoryOutput": before_inventory[-50000:],
     }
     emit_payload(payload, before_inventory)
@@ -5223,6 +5246,7 @@ if already_verified:
         "foundPatchIds": already_found_patch_ids or ([primary_patch_id] if primary_patch_id else []),
         "missingPatchIds": [patch_id for patch_id in verification_patch_ids if patch_id not in already_found_patch_ids],
         "inventoryVerified": True,
+        "inventorySource": before_inventory_source,
         "message": "Selected patches are already applied in the selected ORACLE_HOME." if apply_mode == "batch" else "Patch is already applied in the selected ORACLE_HOME.",
         "inventoryTail": before_inventory[-50000:],
     }
@@ -5230,19 +5254,22 @@ if already_verified:
     raise SystemExit(0)
 
 conflict_outputs = []
-conflict_targets = batch_roots if apply_mode == "batch" else [apply_dir]
 conflict_code = 0
 conflict_error = ""
 required_prerequisite_patches = []
-for conflict_target in conflict_targets:
-    target_code, target_output = run_command([opatch, "prereq", "CheckConflictAgainstOHWithDetail", "-ph", conflict_target] + debug_args, timeout=1800)
-    conflict_outputs.append(target_output)
-    target_failure = opatch_conflict_failure_message(target_output)
-    if target_code != 0 or target_failure:
-        conflict_code = target_code or 1
-        conflict_error = target_failure or "OPatch conflict prerequisite failed."
-        required_prerequisite_patches = required_opatch_prerequisite_ids(target_output)
-        break
+if dry_run:
+    conflict_targets = batch_roots if apply_mode == "batch" else [apply_dir]
+    for conflict_target in conflict_targets:
+        target_code, target_output = run_command([opatch, "prereq", "CheckConflictAgainstOHWithDetail", "-ph", conflict_target] + debug_args, timeout=1800)
+        conflict_outputs.append(target_output)
+        target_failure = opatch_conflict_failure_message(target_output)
+        if target_code != 0 or target_failure:
+            conflict_code = target_code or 1
+            conflict_error = target_failure or "OPatch conflict prerequisite failed."
+            required_prerequisite_patches = required_opatch_prerequisite_ids(target_output)
+            break
+else:
+    emit("PatchPilot optimized real apply: skipping the duplicate standalone conflict scan; OPatch apply/napply performs its own prerequisite and conflict validation before modifying the Oracle home.")
 conflict_output = "\n".join(conflict_outputs)
 if conflict_code != 0:
     payload = {
@@ -5297,7 +5324,8 @@ if apply_mode == "batch":
     apply_code, apply_output = run_command(apply_command, timeout=7200)
 else:
     apply_code, apply_output = run_command([opatch, "apply", "-silent"] + debug_args, cwd=apply_dir, timeout=7200)
-if apply_code != 0:
+apply_semantic_error = opatch_conflict_failure_message(apply_output)
+if apply_code != 0 or apply_semantic_error:
     payload = {
         "status": "failed",
         "dryRun": False,
@@ -5312,13 +5340,14 @@ if apply_code != 0:
         "applyMode": apply_mode,
         "batchSelection": batch_selection if apply_mode == "batch" else "",
         "inventoryVerified": False,
-        "error": "OPatch %s failed with return code %s." % ("napply" if apply_mode == "batch" else "apply", apply_code),
+        "error": apply_semantic_error or "OPatch %s failed with return code %s." % ("napply" if apply_mode == "batch" else "apply", apply_code),
+        "requiredPrerequisitePatches": required_opatch_prerequisite_ids(apply_output),
         "applyOutput": apply_output[-50000:],
     }
     emit_payload(payload, conflict_output, apply_output)
     raise SystemExit(0)
 
-after_code, after_inventory = run_command([opatch, "lsinventory"], timeout=900)
+after_code, after_inventory, after_inventory_source = run_fast_inventory("after apply")
 if after_code != 0:
     payload = {
         "status": "failed",
@@ -5332,7 +5361,8 @@ if after_code != 0:
         "primaryPatchId": primary_patch_id,
         "opatchVersion": opatch_version,
         "inventoryVerified": False,
-        "error": "OPatch %s completed, but lsinventory failed after apply." % ("napply" if apply_mode == "batch" else "apply"),
+        "error": "OPatch %s completed, but inventory verification failed after apply." % ("napply" if apply_mode == "batch" else "apply"),
+        "inventorySource": after_inventory_source,
         "applyOutput": apply_output[-50000:],
         "inventoryOutput": after_inventory[-50000:],
     }
@@ -5344,17 +5374,30 @@ missing_patch_ids = [patch_id for patch_id in verification_patch_ids if patch_id
 primary_verified = bool(primary_patch_id and inventory_contains(after_inventory, primary_patch_id))
 inventory_verified = not missing_patch_ids and bool(verification_patch_ids) if apply_mode == "batch" else (primary_verified if primary_patch_id else bool(found_patch_ids or not patch_ids))
 
+if not inventory_verified and after_inventory_source == "lspatches":
+    emit("Fast lspatches verification did not confirm every expected patch id; running full lsinventory before reporting a verification failure.")
+    fallback_code, fallback_inventory = run_command([opatch, "lsinventory"], timeout=900)
+    if fallback_code == 0:
+        after_inventory = fallback_inventory
+        after_inventory_source = "lsinventory"
+        found_patch_ids = [patch_id for patch_id in verification_patch_ids if inventory_contains(after_inventory, patch_id)]
+        missing_patch_ids = [patch_id for patch_id in verification_patch_ids if patch_id not in found_patch_ids]
+        primary_verified = bool(primary_patch_id and inventory_contains(after_inventory, primary_patch_id))
+        inventory_verified = not missing_patch_ids and bool(verification_patch_ids) if apply_mode == "batch" else (primary_verified if primary_patch_id else bool(found_patch_ids or not patch_ids))
+    else:
+        emit("Full lsinventory fallback failed; preserving the fast inventory result for diagnostics.")
+
 status = "succeeded" if inventory_verified else "failed"
 error = ""
 if not inventory_verified:
     if apply_mode == "batch":
-        error = "OPatch napply finished, but these patch ids were not found in lsinventory for %s: %s." % (oracle_home, ", ".join(missing_patch_ids))
+        error = "OPatch napply finished, but these patch ids were not found in %s for %s: %s." % (after_inventory_source, oracle_home, ", ".join(missing_patch_ids))
     elif primary_patch_id:
-        error = "OPatch apply finished, but patch %s was not found in lsinventory for %s." % (primary_patch_id, oracle_home)
+        error = "OPatch apply finished, but patch %s was not found in %s for %s." % (primary_patch_id, after_inventory_source, oracle_home)
     elif patch_ids:
-        error = "OPatch apply finished, but none of the discovered patch ids were found in lsinventory for %s." % oracle_home
+        error = "OPatch apply finished, but none of the discovered patch ids were found in %s for %s." % (after_inventory_source, oracle_home)
     else:
-        error = "OPatch apply finished, but PatchPilot could not discover a patch id to verify in lsinventory."
+        error = "OPatch apply finished, but PatchPilot could not discover a patch id to verify in inventory."
 
 payload = {
     "status": status,
@@ -5373,6 +5416,7 @@ payload = {
     "foundPatchIds": found_patch_ids,
     "missingPatchIds": missing_patch_ids,
     "inventoryVerified": inventory_verified,
+    "inventorySource": after_inventory_source,
     "error": error,
     "applyOutput": apply_output[-50000:],
     "inventoryTail": after_inventory[-50000:],
