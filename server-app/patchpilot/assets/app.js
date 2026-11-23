@@ -139,6 +139,7 @@ const state = {
   opatchUpgradeOutput: "",
   patchApplied: false,
   patchResult: null,
+  successfulDryRun: null,
   patchApplyOutput: "",
   patchProgressPhase: "idle",
   patchStartedAt: 0,
@@ -1469,7 +1470,8 @@ const PATCH_PROGRESS_PHASES = {
   version: { percent: 15, label: "Checking OPatch version" },
   inventoryBefore: { percent: 25, label: "Reading current inventory" },
   conflict: { percent: 40, label: "Running conflict check" },
-  apply: { percent: 60, label: "Applying patch files" },
+  applyPrereq: { percent: 55, label: "OPatch internal prerequisite check" },
+  apply: { percent: 70, label: "Applying patch files" },
   inventoryAfter: { percent: 85, label: "Verifying updated inventory" },
   dryRunComplete: { percent: 100, label: "Dry-run complete" },
   complete: { percent: 100, label: "Complete" },
@@ -1508,7 +1510,13 @@ function updatePatchProgressFromOutput(output, dryRun) {
   if (inventoryIndex >= 0 && (applyIndex < 0 || inventoryIndex < applyIndex)) setPatchProgressPhase("inventoryBefore");
   if (conflictIndex >= 0) setPatchProgressPhase("conflict");
   if (dryRun) return;
-  if (applyIndex >= 0) setPatchProgressPhase("apply");
+  if (applyIndex >= 0) {
+    setPatchProgressPhase("applyPrereq");
+    const applyOutput = text.slice(applyIndex);
+    if (/Finished checking prereq\s+CheckConflictAgainstOHWithDetail|Applying interim patch|Patching component|Copying (?:files?|components?)/i.test(applyOutput)) {
+      setPatchProgressPhase("apply");
+    }
+  }
   if (applyIndex >= 0 && inventoryIndex > applyIndex) setPatchProgressPhase("inventoryAfter");
 }
 
@@ -1794,12 +1802,25 @@ function renderSpbPhaseStatus(phase) {
   `;
 }
 
+function matchingSuccessfulDryRun() {
+  const validation = state.successfulDryRun;
+  if (!validation || Date.now() - Number(validation.completedAt || 0) > 15 * 60 * 1000) return false;
+  const home = selectedHome();
+  return validation.oracleHome === home.oracleHome
+    && validation.patchPath === state.form.patchPath
+    && validation.applyMode === (isBatchNapply() ? "batch" : "single")
+    && validation.batchSelection === (state.form.batchSelection || "all")
+    && validation.batchPatchIds === (state.form.batchPatchIds || "")
+    && validation.patchListFile === (state.form.patchListFile || "");
+}
+
 function commandPreview(options = {}) {
   const home = selectedHome();
   const analysis = state.readmeAnalysis || analyzeReadme(state.readmeText);
   const patchApplyDir = state.patchResult && state.patchResult.applyDir ? state.patchResult.applyDir : state.form.patchPath;
   const debugArgs = typeof options.debug === "boolean" ? (options.debug ? " -verbose -debug" : "") : opatchDebugArgsText();
   const dryRun = typeof options.dryRun === "boolean" ? options.dryRun : Boolean(dom.dryRunToggle && dom.dryRunToggle.checked);
+  const reuseDryRun = !dryRun && matchingSuccessfulDryRun();
   if (isStackPatchBundle()) {
     const inactivePatchCommands = [
       "Stop-for-backup gate must pass before file-system tar backups",
@@ -1838,10 +1859,10 @@ function commandPreview(options = {}) {
     const commands = [
       `cd ${state.form.patchPath}`,
       opatchHeapExportCommand(),
-      `${home.oracleHome}/OPatch/opatch version`,
-      `${home.oracleHome}/OPatch/opatch lspatches`,
-      `Fallback only when needed: ${home.oracleHome}/OPatch/opatch lsinventory`
+      `${home.oracleHome}/OPatch/opatch version`
     ];
+    if (reuseDryRun) commands.push("Pre-apply inventory check skipped: matching successful dry-run is still valid");
+    else commands.push(`${home.oracleHome}/OPatch/opatch lspatches`, `Fallback only when needed: ${home.oracleHome}/OPatch/opatch lsinventory`);
     if (dryRun) commands.push("Run CheckConflictAgainstOHWithDetail for every selected patch directory");
     else commands.push("Duplicate standalone conflict scan skipped; OPatch napply performs its own prerequisite checks", batchNapplyCommand(home, debugArgs), `${home.oracleHome}/OPatch/opatch lspatches`, `Fallback only when needed: ${home.oracleHome}/OPatch/opatch lsinventory`);
     return commands;
@@ -1849,10 +1870,10 @@ function commandPreview(options = {}) {
   const commands = [
     `cd ${patchApplyDir}`,
     opatchHeapExportCommand(),
-    `${home.oracleHome}/OPatch/opatch version`,
-    `${home.oracleHome}/OPatch/opatch lspatches`,
-    `Fallback only when needed: ${home.oracleHome}/OPatch/opatch lsinventory`
+    `${home.oracleHome}/OPatch/opatch version`
   ];
+  if (reuseDryRun) commands.push("Pre-apply inventory check skipped: matching successful dry-run is still valid");
+  else commands.push(`${home.oracleHome}/OPatch/opatch lspatches`, `Fallback only when needed: ${home.oracleHome}/OPatch/opatch lsinventory`);
   if (dryRun) commands.push(`${home.oracleHome}/OPatch/opatch prereq CheckConflictAgainstOHWithDetail -ph ./${debugArgs}`);
   else commands.push("Duplicate standalone conflict scan skipped; OPatch apply performs its own prerequisite checks", `${home.oracleHome}/OPatch/opatch apply -silent${debugArgs}`, `${home.oracleHome}/OPatch/opatch lspatches`, `Fallback only when needed: ${home.oracleHome}/OPatch/opatch lsinventory`, analysis.rollbackCommand.replace("$ORACLE_HOME", home.oracleHome));
   return commands;
@@ -3576,6 +3597,7 @@ function renderApplyStep() {
         <div><span>Verbose/debug</span><strong>${state.opatchDebugUsed || result.debug ? "Enabled" : "Disabled"}</strong></div>
         <div><span>Patch ids expected</span><strong>${escapeHtml((result.targetPatchIds || result.patchIds || []).join(", ") || result.primaryPatchId || "not discovered")}</strong></div>
         <div><span>Inventory verified</span><strong>${result.inventoryVerified ? "Yes" : "No"}</strong></div>
+        <div><span>Pre-apply inventory</span><strong>${result.preApplyInventorySkipped ? "Skipped - reused matching dry-run" : "Executed"}</strong></div>
         <div><span>Inventory command</span><strong>${escapeHtml(result.inventorySource || "not recorded")}</strong></div>
         ${(result.foundPatchIds || []).length ? `<div><span>Patch ids found</span><strong>${escapeHtml(result.foundPatchIds.join(", "))}</strong></div>` : ""}
         ${(result.missingPatchIds || []).length ? `<div><span>Patch ids missing</span><strong>${escapeHtml(result.missingPatchIds.join(", "))}</strong></div>` : ""}
@@ -7250,6 +7272,7 @@ async function applyPatch() {
   const dryRun = dom.dryRunToggle.checked;
   const home = selectedHome();
   const applyLabel = patchApplyCommandLabel();
+  const reuseValidatedDryRun = !dryRun && matchingSuccessfulDryRun();
   if (!shutdownGateSatisfied("shutdown")) {
     const shutdownIndex = workflowSteps().findIndex((step) => step.id === "shutdown");
     if (shutdownIndex >= 0) state.activeStep = shutdownIndex;
@@ -7284,6 +7307,7 @@ async function applyPatch() {
   state.patchProgressPhase = "idle";
   setPatchProgressPhase("preparing");
   state.opatchDebugUsed = opatchDebugEnabled();
+  if (dryRun) state.successfulDryRun = null;
   state.patchApplied = false;
   state.patchResult = null;
   state.patchApplyOutput = "";
@@ -7330,6 +7354,7 @@ async function applyPatch() {
         batchPatchIds: state.form.batchPatchIds,
         patchListFile: state.form.patchListFile,
         dryRun,
+        reuseValidatedDryRun,
         debug: state.opatchDebugUsed,
         opatchHeapOptions: opatchHeapOptions()
       });
@@ -7361,6 +7386,15 @@ async function applyPatch() {
         state.patchResult = patch;
         state.progress = 100;
         if (patch.status === "dry-run") {
+          state.successfulDryRun = {
+            oracleHome: home.oracleHome,
+            patchPath: state.form.patchPath,
+            applyMode: isBatchNapply() ? "batch" : "single",
+            batchSelection: state.form.batchSelection || "all",
+            batchPatchIds: state.form.batchPatchIds || "",
+            patchListFile: state.form.patchListFile || "",
+            completedAt: Date.now()
+          };
           setPatchProgressPhase("dryRunComplete");
           state.patchApplied = false;
           state.completed.delete("apply");

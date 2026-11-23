@@ -4704,6 +4704,7 @@ def build_patch_apply_script(body):
     oracle_home = str(body.get("oracleHome") or "").strip()
     patch_path = str(body.get("patchPath") or "").strip()
     dry_run = bool(body.get("dryRun"))
+    reuse_validated_dry_run = bool(body.get("reuseValidatedDryRun")) and not dry_run
     debug = bool(body.get("debug"))
     apply_mode = str(body.get("applyMode") or "single").strip().lower()
     batch_selection = str(body.get("batchSelection") or "all").strip().lower()
@@ -4726,6 +4727,7 @@ def build_patch_apply_script(body):
         "oracleHome": oracle_home,
         "patchPath": patch_path,
         "dryRun": dry_run,
+        "reuseValidatedDryRun": reuse_validated_dry_run,
         "debug": debug,
         "applyMode": apply_mode,
         "batchSelection": batch_selection,
@@ -4746,6 +4748,7 @@ request = json.loads(__PATCHSCOPE_PATCH_JSON__)
 oracle_home = os.path.abspath(str(request.get("oracleHome") or ""))
 patch_path = os.path.abspath(str(request.get("patchPath") or ""))
 dry_run = bool(request.get("dryRun"))
+reuse_validated_dry_run = bool(request.get("reuseValidatedDryRun")) and not dry_run
 debug = bool(request.get("debug"))
 apply_mode = str(request.get("applyMode") or "single").strip().lower()
 batch_selection = str(request.get("batchSelection") or "all").strip().lower()
@@ -5176,6 +5179,7 @@ if apply_mode == "batch":
     emit("Batch patch directories: %s" % ", ".join(batch_roots))
     emit("Batch patch ids selected for verification: %s" % ", ".join(target_patch_ids))
 emit("Dry-run only: %s" % ("yes" if dry_run else "no"))
+emit("Reuse matching successful dry-run: %s" % ("yes" if reuse_validated_dry_run else "no"))
 emit("OPatch verbose/debug: %s" % ("yes" if debug else "no"))
 emit("OPatch heap options %s: OPATCH_JRE_MEMORY_OPTIONS=%s" % (opatch_heap.get("action"), opatch_heap.get("effective")))
 emit("Patch ids discovered from patch metadata/path: %s" % (", ".join(patch_ids) if patch_ids else "none"))
@@ -5195,13 +5199,18 @@ if version_code != 0:
         "primaryPatchId": primary_patch_id,
         "opatchVersion": opatch_version,
         "inventoryVerified": False,
+        "preApplyInventorySkipped": reuse_validated_dry_run,
         "error": "OPatch version command failed.",
         "versionOutput": version_output[-50000:],
     }
     emit_payload(payload, version_output)
     raise SystemExit(0)
 
-before_code, before_inventory, before_inventory_source = run_fast_inventory("before apply")
+if reuse_validated_dry_run:
+    emit("PatchPilot optimized apply: skipping pre-apply inventory because the same Oracle home and patch source passed dry-run recently. Post-apply inventory verification remains required.")
+    before_code, before_inventory, before_inventory_source = 0, "", "skipped after matching dry-run"
+else:
+    before_code, before_inventory, before_inventory_source = run_fast_inventory("before apply")
 if before_code != 0:
     payload = {
         "status": "failed",
@@ -5215,6 +5224,7 @@ if before_code != 0:
         "primaryPatchId": primary_patch_id,
         "opatchVersion": opatch_version,
         "inventoryVerified": False,
+        "preApplyInventorySkipped": reuse_validated_dry_run,
         "error": "OPatch inventory failed before apply.",
         "inventorySource": before_inventory_source,
         "inventoryOutput": before_inventory[-50000:],
@@ -5246,6 +5256,7 @@ if already_verified:
         "foundPatchIds": already_found_patch_ids or ([primary_patch_id] if primary_patch_id else []),
         "missingPatchIds": [patch_id for patch_id in verification_patch_ids if patch_id not in already_found_patch_ids],
         "inventoryVerified": True,
+        "preApplyInventorySkipped": reuse_validated_dry_run,
         "inventorySource": before_inventory_source,
         "message": "Selected patches are already applied in the selected ORACLE_HOME." if apply_mode == "batch" else "Patch is already applied in the selected ORACLE_HOME.",
         "inventoryTail": before_inventory[-50000:],
@@ -5286,6 +5297,7 @@ if conflict_code != 0:
         "applyMode": apply_mode,
         "batchSelection": batch_selection if apply_mode == "batch" else "",
         "inventoryVerified": False,
+        "preApplyInventorySkipped": reuse_validated_dry_run,
         "error": conflict_error or "OPatch conflict prerequisite failed.",
         "requiredPrerequisitePatches": required_prerequisite_patches,
         "conflictOutput": conflict_output[-50000:],
@@ -5308,6 +5320,7 @@ if dry_run:
         "applyMode": apply_mode,
         "batchSelection": batch_selection if apply_mode == "batch" else "",
         "inventoryVerified": False,
+        "preApplyInventorySkipped": reuse_validated_dry_run,
         "message": "Dry-run completed. Conflict checks passed, but opatch %s was not executed." % ("napply" if apply_mode == "batch" else "apply"),
         "conflictOutput": conflict_output[-50000:],
     }
@@ -5340,6 +5353,7 @@ if apply_code != 0 or apply_semantic_error:
         "applyMode": apply_mode,
         "batchSelection": batch_selection if apply_mode == "batch" else "",
         "inventoryVerified": False,
+        "preApplyInventorySkipped": reuse_validated_dry_run,
         "error": apply_semantic_error or "OPatch %s failed with return code %s." % ("napply" if apply_mode == "batch" else "apply", apply_code),
         "requiredPrerequisitePatches": required_opatch_prerequisite_ids(apply_output),
         "applyOutput": apply_output[-50000:],
@@ -5361,6 +5375,7 @@ if after_code != 0:
         "primaryPatchId": primary_patch_id,
         "opatchVersion": opatch_version,
         "inventoryVerified": False,
+        "preApplyInventorySkipped": reuse_validated_dry_run,
         "error": "OPatch %s completed, but inventory verification failed after apply." % ("napply" if apply_mode == "batch" else "apply"),
         "inventorySource": after_inventory_source,
         "applyOutput": apply_output[-50000:],
@@ -5416,6 +5431,7 @@ payload = {
     "foundPatchIds": found_patch_ids,
     "missingPatchIds": missing_patch_ids,
     "inventoryVerified": inventory_verified,
+    "preApplyInventorySkipped": reuse_validated_dry_run,
     "inventorySource": after_inventory_source,
     "error": error,
     "applyOutput": apply_output[-50000:],

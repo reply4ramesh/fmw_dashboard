@@ -167,6 +167,15 @@ OPatch succeeded.
         self.assertIn('[opatch, "lspatches"]', real_script)
         self.assertIn("falling back to full lsinventory", real_script)
         self.assertIn("Fast lspatches verification did not confirm every expected patch id", real_script)
+        reused_script = server.build_patch_apply_script({
+            "oracleHome": "/opt/oracle/fmw",
+            "patchPath": "/stage/oneoff/40105072",
+            "dryRun": False,
+            "reuseValidatedDryRun": True,
+        })
+        self.assertIn('reuse_validated_dry_run = bool(request.get("reuseValidatedDryRun")) and not dry_run', reused_script)
+        self.assertIn("skipping pre-apply inventory because the same Oracle home and patch source passed dry-run recently", reused_script)
+        self.assertIn('"preApplyInventorySkipped": reuse_validated_dry_run', reused_script)
         self.assertIn("skipping the duplicate standalone conflict scan", real_script)
         self.assertIn("if dry_run:", real_script)
         self.assertIn("CheckConflictAgainstOHWithDetail", dry_run_script)
@@ -174,11 +183,16 @@ OPatch succeeded.
         self.assertIn('payload["commandTimings"] = list(command_timings)', real_script)
         compile(real_script, "<patchpilot-optimized-real-apply>", "exec")
         compile(dry_run_script, "<patchpilot-optimized-dry-run>", "exec")
+        compile(reused_script, "<patchpilot-reused-dry-run>", "exec")
 
         javascript = (APP_ROOT / "patchpilot" / "assets" / "app.js").read_text(encoding="utf-8")
         self.assertIn("Duplicate standalone conflict scan skipped", javascript)
         self.assertIn("Command Performance", javascript)
         self.assertIn("Inventory command", javascript)
+        self.assertIn("matchingSuccessfulDryRun", javascript)
+        self.assertIn("reuseValidatedDryRun", javascript)
+        self.assertIn('applyPrereq: { percent: 55, label: "OPatch internal prerequisite check" }', javascript)
+        self.assertIn("Finished checking prereq", javascript)
 
     def test_batch_napply_rejects_invalid_or_missing_selection(self):
         server = app.patchpilot_server
